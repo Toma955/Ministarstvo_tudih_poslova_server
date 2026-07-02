@@ -13,6 +13,7 @@ import {
   feedbackState,
   listInboxForDevice,
   getDeliveryPackage,
+  getMessageRecord,
 } from "../stores/voiceMessageStore.js";
 import { notifyVoiceMessageRecipients } from "../services/notifications.js";
 
@@ -80,7 +81,7 @@ router.post("/:sessionId/key-offers", authMiddleware(), (req, res) => {
     });
   }
 
-  const session = getActiveSession(sessionId);
+  const session = getMessageRecord(sessionId);
   if (!session) {
     return res.status(404).json({ error: "not_found", message: "Sesija nije pronađena." });
   }
@@ -91,6 +92,7 @@ router.post("/:sessionId/key-offers", authMiddleware(), (req, res) => {
 
   const sender = getUser(deviceId);
   let applied = 0;
+  let skipped = 0;
 
   for (const offer of offers) {
     const recipientId = offer.recipient_device_id;
@@ -108,23 +110,27 @@ router.post("/:sessionId/key-offers", authMiddleware(), (req, res) => {
 
     const recipient = getUser(recipientId);
     if (!recipient?.room_code || recipient.room_code !== sender?.room_code) {
-      return res.status(403).json({
-        error: "forbidden",
-        message: "Primatelj nije u istoj sobi.",
-      });
+      skipped += 1;
+      continue;
     }
 
     const result = addKeyOffer(sessionId, recipientId, version, ciphertext);
     if (!result) {
-      return res.status(409).json({
-        error: "conflict",
-        message: "Key offer nije moguće spremiti za ovu sesiju.",
-      });
+      skipped += 1;
+      continue;
     }
     applied += 1;
   }
 
-  res.json({ ok: true, count: applied });
+  if (applied === 0 && skipped > 0) {
+    return res.status(409).json({
+      error: "conflict",
+      message: "Nijedan key offer nije primijenjen.",
+      skipped,
+    });
+  }
+
+  res.json({ ok: true, count: applied, skipped });
 });
 
 router.post("/:sessionId/chunks", authMiddleware(), (req, res) => {

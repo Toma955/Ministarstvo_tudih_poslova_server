@@ -143,7 +143,11 @@ export function upsertUser(user) {
       display_name = excluded.display_name,
       sender_name = excluded.sender_name,
       avatar_jpeg_base64 = COALESCE(excluded.avatar_jpeg_base64, users.avatar_jpeg_base64),
-      public_key_base64 = COALESCE(excluded.public_key_base64, users.public_key_base64),
+      public_key_base64 = CASE
+        WHEN excluded.public_key_base64 IS NOT NULL AND excluded.public_key_base64 != ''
+        THEN excluded.public_key_base64
+        ELSE users.public_key_base64
+      END,
       room_code = COALESCE(excluded.room_code, users.room_code),
       is_base_station = excluded.is_base_station,
       updated_at = datetime('now')

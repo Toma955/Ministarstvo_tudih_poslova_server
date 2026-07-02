@@ -6,6 +6,7 @@ import {
   getAdminByUsername,
   listUsers,
   getUser,
+  deleteUser,
   setAppSetting,
   getAppSetting,
 } from "../db/database.js";
@@ -69,6 +70,14 @@ router.get("/users/:deviceId", authMiddleware("admin"), (req, res) => {
   }
 
   res.json({ user });
+});
+
+router.delete("/users/:deviceId", authMiddleware("admin"), (req, res) => {
+  const deleted = deleteUser(req.params.deviceId);
+  if (!deleted) {
+    return res.status(404).json({ error: "not_found", message: "Korisnik nije pronađen." });
+  }
+  res.json({ ok: true });
 });
 
 router.get("/messages", authMiddleware("admin"), (_req, res) => {
@@ -146,6 +155,10 @@ router.put("/settings/system-message", authMiddleware("admin"), (req, res) => {
     severity: allowedSeverity.has(body.severity)
       ? body.severity
       : current.severity || "info",
+    blocks_app:
+      typeof body.blocks_app === "boolean"
+        ? body.blocks_app
+        : Boolean(current.blocks_app ?? false),
   };
 
   setAppSetting("system_message", next);

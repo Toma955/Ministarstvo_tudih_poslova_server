@@ -1,15 +1,23 @@
 import express from "express";
 import cors from "cors";
 import morgan from "morgan";
+import path from "path";
+import { fileURLToPath } from "url";
 import { config } from "./config.js";
 import { apiVersionMiddleware } from "./middleware/auth.js";
 
+import accountRoutes from "./routes/account.js";
 import authRoutes from "./routes/auth.js";
 import profileRoutes from "./routes/profile.js";
+import userRoutes from "./routes/users.js";
+import roomRoutes from "./routes/rooms.js";
 import messageRoutes from "./routes/messages.js";
 import publicRoutes from "./routes/public.js";
 import adminRoutes from "./routes/admin.js";
 import { memoryStats } from "./stores/voiceMessageStore.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const adminPanelPath = path.join(__dirname, "../public/admin/index.html");
 
 const app = express();
 
@@ -32,8 +40,15 @@ app.get("/health", (_req, res) => {
   });
 });
 
+app.get("/admin", (_req, res) => {
+  res.sendFile(adminPanelPath);
+});
+
+app.use("/api/v1/account", accountRoutes);
 app.use("/api/v1/auth", authRoutes);
+app.use("/api/v1/rooms", roomRoutes);
 app.use("/api/v1/profile", profileRoutes);
+app.use("/api/v1/users", userRoutes);
 app.use("/api/v1/messages", messageRoutes);
 app.use("/api/v1", publicRoutes);
 app.use("/admin", adminRoutes);
@@ -49,6 +64,7 @@ app.use((err, _req, res, _next) => {
 
 app.listen(config.port, () => {
   console.log(`[server] Slušam na portu ${config.port}`);
-  console.log(`[server] Admin: ${config.adminUsername} (postavi ADMIN_PASSWORD u produkciji)`);
+  console.log(`[server] Admin panel: http://localhost:${config.port}/admin`);
+  console.log(`[server] Admin login: ${config.adminUsername}`);
   console.log(`[server] Max glasovnih poruka u RAM-u: ${config.maxVoiceMessages}`);
 });

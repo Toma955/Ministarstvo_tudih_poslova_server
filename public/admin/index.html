@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="hr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin — Ministarstvo tuđih poslova</title>
+  <style>
+    :root {
+      --bg: #0f1410;
+      --panel: #1a231c;
+      --border: #2d3b30;
+      --text: #e8efe9;
+      --muted: #9aab9d;
+      --accent: #3d7a52;
+      --accent-hover: #4a9463;
+      --danger: #b54a4a;
+      --warning: #c9a227;
+      --ok: #5a9e6f;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Times New Roman", Georgia, serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    .wrap { max-width: 960px; margin: 0 auto; padding: 24px 16px 48px; }
+    h1 { font-size: 1.6rem; margin: 0 0 4px; }
+    .subtitle { color: var(--muted); margin-bottom: 24px; font-size: 0.95rem; }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px;
+      margin-bottom: 16px;
+    }
+    .card h2 { margin: 0 0 14px; font-size: 1.1rem; }
+    label { display: block; margin-bottom: 6px; color: var(--muted); font-size: 0.85rem; }
+    input, textarea, select, button {
+      font: inherit;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: #111711;
+      color: var(--text);
+      padding: 10px 12px;
+      width: 100%;
+    }
+    textarea { min-height: 72px; resize: vertical; }
+    button {
+      width: auto;
+      cursor: pointer;
+      background: var(--accent);
+      border-color: var(--accent);
+      font-weight: 600;
+      margin-top: 8px;
+    }
+    button:hover { background: var(--accent-hover); }
+    button.secondary { background: transparent; border-color: var(--border); color: var(--muted); }
+    button.danger { background: var(--danger); border-color: var(--danger); }
+    button.warning { background: #7a5a1a; border-color: var(--warning); }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    @media (max-width: 640px) { .row { grid-template-columns: 1fr; } }
+    .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+    .stat {
+      background: #111711;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px;
+      text-align: center;
+    }
+    .stat .num { font-size: 1.8rem; font-weight: bold; color: var(--ok); }
+    .stat .lbl { color: var(--muted); font-size: 0.8rem; margin-top: 4px; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th, td { padding: 10px 8px; border-bottom: 1px solid var(--border); text-align: left; }
+    th { color: var(--muted); font-weight: 600; }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      background: #243028;
+    }
+    .badge.on { background: #1f3d2a; color: #8fd4a5; }
+    .badge.off { background: #3d2020; color: #e89898; }
+    .hidden { display: none !important; }
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+    .error { color: #f09090; margin-top: 8px; font-size: 0.9rem; }
+    .success { color: #8fd4a5; margin-top: 8px; font-size: 0.9rem; }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .actions button { margin-top: 0; padding: 6px 10px; font-size: 0.8rem; }
+    code { font-size: 0.75rem; color: var(--muted); word-break: break-all; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div id="loginView">
+      <h1>Ministarstvo tuđih poslova</h1>
+      <p class="subtitle">Sektor za komunikacije — admin prijava</p>
+      <div class="card" style="max-width: 420px;">
+        <h2>Prijava</h2>
+        <label for="username">Korisničko ime</label>
+        <input id="username" autocomplete="username" value="admin">
+        <label for="password" style="margin-top:12px">Lozinka</label>
+        <input id="password" type="password" autocomplete="current-password">
+        <button id="loginBtn" type="button">Ulogiraj se</button>
+        <p id="loginError" class="error hidden"></p>
+      </div>
+    </div>
+
+    <div id="dashboardView" class="hidden">
+      <div class="topbar">
+        <div>
+          <h1>Admin panel</h1>
+          <p class="subtitle">Pozdrav, <span id="adminName">admin</span></p>
+        </div>
+        <button class="secondary" id="logoutBtn" type="button">Odjava</button>
+      </div>
+
+      <div class="stats card">
+        <div class="stat"><div class="num" id="statUsers">0</div><div class="lbl">Korisnici</div></div>
+        <div class="stat"><div class="num" id="statMessages">0</div><div class="lbl">Poruke u RAM-u</div></div>
+        <div class="stat"><div class="num" id="statStatus">—</div><div class="lbl">App status</div></div>
+      </div>
+
+      <div class="card">
+        <h2>App na spavanje / buđenje</h2>
+        <p style="color:var(--muted);margin-top:0;font-size:0.9rem">
+          Kad je app „spavala“, iOS prikazuje puni ekran modusa nerada.
+        </p>
+        <div class="row">
+          <div>
+            <label>Status</label>
+            <select id="operationalSelect">
+              <option value="true">Radi (budi app)</option>
+              <option value="false">Spava (gasí app)</option>
+            </select>
+          </div>
+          <div>
+            <label>Radno vrijeme (label)</label>
+            <input id="workingHours" placeholder="pon–pet 07:00–19:00">
+          </div>
+        </div>
+        <label style="margin-top:12px">Poruka korisnicima</label>
+        <textarea id="operatingMessage" placeholder="Aplikacija ne radi izvan radnog vremena."></textarea>
+        <div class="actions">
+          <button id="saveOperatingBtn" type="button">Spremi status</button>
+          <button class="warning" id="sleepNowBtn" type="button">Stavi app na spavanje sada</button>
+          <button class="secondary" id="wakeNowBtn" type="button">Probudi app</button>
+        </div>
+        <p id="operatingMsg" class="success hidden"></p>
+      </div>
+
+      <div class="card">
+        <h2>Sistemska obavijest</h2>
+        <div class="row">
+          <div>
+            <label>Aktivna</label>
+            <select id="sysActive">
+              <option value="false">Ne</option>
+              <option value="true">Da</option>
+            </select>
+          </div>
+          <div>
+            <label>Blokira app (održavanje)</label>
+            <select id="sysBlocksApp">
+              <option value="false">Ne</option>
+              <option value="true">Da — puni ekran</option>
+            </select>
+          </div>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <div>
+            <label>Ozbiljnost</label>
+            <select id="sysSeverity">
+              <option value="info">info</option>
+              <option value="warning">warning</option>
+              <option value="error">error</option>
+            </select>
+          </div>
+        </div>
+        <label style="margin-top:12px">Naslov</label>
+        <input id="sysTitle" placeholder="Obavijest">
+        <label style="margin-top:12px">Tekst</label>
+        <textarea id="sysMessage"></textarea>
+        <div class="actions">
+          <button id="saveSystemBtn" type="button">Spremi obavijest</button>
+          <button class="warning" id="maintenanceOnBtn" type="button">Uključi održavanje</button>
+          <button class="secondary" id="maintenanceOffBtn" type="button">Isključi održavanje</button>
+        </div>
+        <p id="systemMsg" class="success hidden"></p>
+      </div>
+
+      <div class="card">
+        <h2>Korisnici</h2>
+        <button class="secondary" id="refreshUsersBtn" type="button" style="margin-bottom:12px">Osvježi</button>
+        <div style="overflow-x:auto">
+          <table>
+            <thead>
+              <tr>
+                <th>Ime</th>
+                <th>Soba</th>
+                <th>Uređaj</th>
+                <th>Baza</th>
+                <th>Ažurirano</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="usersBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const TOKEN_KEY = "mk_admin_token";
+    const api = (path, opts = {}) => {
+      const headers = { "Content-Type": "application/json", ...(opts.headers || {}) };
+      const token = localStorage.getItem(TOKEN_KEY);
+      if (token) headers.Authorization = "Bearer " + token;
+      return fetch(path, { ...opts, headers }).then(async (res) => {
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.message || "Greška " + res.status);
+        return data;
+      });
+    };
+
+    const loginView = document.getElementById("loginView");
+    const dashboardView = document.getElementById("dashboardView");
+
+    function showDashboard() {
+      loginView.classList.add("hidden");
+      dashboardView.classList.remove("hidden");
+      loadDashboard();
+    }
+
+    function showLogin() {
+      localStorage.removeItem(TOKEN_KEY);
+      dashboardView.classList.add("hidden");
+      loginView.classList.remove("hidden");
+    }
+
+    async function loadDashboard() {
+      const [me, stats, operating, system, users] = await Promise.all([
+        api("/admin/me"),
+        api("/admin/stats"),
+        api("/admin/settings/operating-status"),
+        api("/admin/settings/system-message"),
+        api("/admin/users"),
+      ]);
+
+      document.getElementById("adminName").textContent = me.username;
+      document.getElementById("statUsers").textContent = stats.users_count;
+      document.getElementById("statMessages").textContent = stats.memory.completed_messages;
+      document.getElementById("statStatus").textContent = operating.is_operational ? "ON" : "OFF";
+
+      document.getElementById("operationalSelect").value = String(operating.is_operational);
+      document.getElementById("workingHours").value = operating.working_hours_label || "";
+      document.getElementById("operatingMessage").value = operating.message || "";
+
+      document.getElementById("sysActive").value = String(system.is_active);
+      document.getElementById("sysBlocksApp").value = String(Boolean(system.blocks_app));
+      document.getElementById("sysSeverity").value = system.severity || "info";
+      document.getElementById("sysTitle").value = system.title || "";
+      document.getElementById("sysMessage").value = system.message || "";
+
+      renderUsers(users.users || []);
+    }
+
+    function renderUsers(users) {
+      const body = document.getElementById("usersBody");
+      if (!users.length) {
+        body.innerHTML = "<tr><td colspan='6' style='color:var(--muted)'>Nema registriranih korisnika.</td></tr>";
+        return;
+      }
+      body.innerHTML = users.map((u) => `
+        <tr>
+          <td>${escapeHtml(u.display_name || u.sender_name || "—")}</td>
+          <td><code>${escapeHtml(u.room_code || "—")}</code></td>
+          <td><code>${escapeHtml(u.device_id)}</code></td>
+          <td><span class="badge ${u.is_base_station ? "on" : ""}">${u.is_base_station ? "Baza" : "Osoba"}</span></td>
+          <td>${escapeHtml((u.updated_at || "").replace("T", " ").slice(0, 16))}</td>
+          <td><button class="danger actions" data-delete="${escapeHtml(u.device_id)}" type="button">Obriši</button></td>
+        </tr>
+      `).join("");
+
+      body.querySelectorAll("[data-delete]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const id = btn.getAttribute("data-delete");
+          if (!confirm("Obrisati korisnika " + id + "?")) return;
+          await api("/admin/users/" + encodeURIComponent(id), { method: "DELETE" });
+          loadDashboard();
+        });
+      });
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+    }
+
+    document.getElementById("loginBtn").addEventListener("click", async () => {
+      const err = document.getElementById("loginError");
+      err.classList.add("hidden");
+      try {
+        const data = await api("/admin/login", {
+          method: "POST",
+          body: JSON.stringify({
+            username: document.getElementById("username").value.trim(),
+            password: document.getElementById("password").value,
+          }),
+        });
+        localStorage.setItem(TOKEN_KEY, data.access_token);
+        showDashboard();
+      } catch (e) {
+        err.textContent = e.message;
+        err.classList.remove("hidden");
+      }
+    });
+
+    document.getElementById("logoutBtn").addEventListener("click", showLogin);
+
+    async function saveOperating(body) {
+      await api("/admin/settings/operating-status", {
+        method: "PUT",
+        body: JSON.stringify(body),
+      });
+      const msg = document.getElementById("operatingMsg");
+      msg.textContent = "Status spremljen.";
+      msg.classList.remove("hidden");
+      loadDashboard();
+    }
+
+    document.getElementById("saveOperatingBtn").addEventListener("click", () => {
+      saveOperating({
+        is_operational: document.getElementById("operationalSelect").value === "true",
+        message: document.getElementById("operatingMessage").value,
+        working_hours_label: document.getElementById("workingHours").value,
+        resumes_at: null,
+      });
+    });
+
+    document.getElementById("sleepNowBtn").addEventListener("click", () => {
+      document.getElementById("operationalSelect").value = "false";
+      saveOperating({
+        is_operational: false,
+        message: document.getElementById("operatingMessage").value || "Aplikacija ne radi izvan radnog vremena.",
+        working_hours_label: document.getElementById("workingHours").value,
+        resumes_at: null,
+      });
+    });
+
+    document.getElementById("wakeNowBtn").addEventListener("click", () => {
+      document.getElementById("operationalSelect").value = "true";
+      saveOperating({
+        is_operational: true,
+        message: "",
+        working_hours_label: document.getElementById("workingHours").value,
+        resumes_at: null,
+      });
+    });
+
+    document.getElementById("saveSystemBtn").addEventListener("click", async () => {
+      await saveSystemMessage();
+    });
+
+    async function saveSystemMessage(overrides = {}) {
+      await api("/admin/settings/system-message", {
+        method: "PUT",
+        body: JSON.stringify({
+          is_active: overrides.is_active ?? (document.getElementById("sysActive").value === "true"),
+          blocks_app: overrides.blocks_app ?? (document.getElementById("sysBlocksApp").value === "true"),
+          title: overrides.title ?? (document.getElementById("sysTitle").value || null),
+          message: overrides.message ?? document.getElementById("sysMessage").value,
+          severity: overrides.severity ?? document.getElementById("sysSeverity").value,
+        }),
+      });
+      const msg = document.getElementById("systemMsg");
+      msg.textContent = "Obavijest spremljena.";
+      msg.classList.remove("hidden");
+      loadDashboard();
+    }
+
+    document.getElementById("maintenanceOnBtn").addEventListener("click", () => {
+      document.getElementById("sysActive").value = "true";
+      document.getElementById("sysBlocksApp").value = "true";
+      document.getElementById("sysTitle").value = "Održavanje";
+      if (!document.getElementById("sysMessage").value.trim()) {
+        document.getElementById("sysMessage").value = "Aplikacija je privremeno nedostupna zbog održavanja servera.";
+      }
+      saveSystemMessage({
+        is_active: true,
+        blocks_app: true,
+        title: "Održavanje",
+        severity: "warning",
+      });
+    });
+
+    document.getElementById("maintenanceOffBtn").addEventListener("click", () => {
+      document.getElementById("sysActive").value = "false";
+      document.getElementById("sysBlocksApp").value = "false";
+      saveSystemMessage({
+        is_active: false,
+        blocks_app: false,
+      });
+    });
+
+    document.getElementById("refreshUsersBtn").addEventListener("click", loadDashboard);
+
+    if (localStorage.getItem(TOKEN_KEY)) {
+      api("/admin/me").then(showDashboard).catch(showLogin);
+    }
+  </script>
+</body>
+</html>

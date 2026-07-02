@@ -11,7 +11,8 @@ npm install
 npm run dev
 ```
 
-Server: `http://localhost:8080`
+Server: `http://localhost:8080`  
+**Admin panel:** `http://localhost:8080/admin` (login: `admin` / lozinka iz `.env`)
 
 ## Deploy na Render
 
@@ -49,6 +50,11 @@ Pri startu pozovi `registerDevice` s `device_id` i javnim ključem.
 | POST | `/messages` | Bearer (user) |
 | POST | `/messages/:id/chunks` | Bearer (user) |
 | POST | `/messages/:id/complete` | Bearer (user) |
+| POST | `/messages/:id/key-offers` | Bearer (user) |
+| GET | `/messages/inbox` | Bearer (user) |
+| GET | `/messages/:id/delivery` | Bearer (user) |
+| GET | `/users/peers` | Bearer (user) |
+| DELETE | `/account` | Bearer (user) — briše vlastiti račun |
 | POST/GET | `/messages/:id/feedback` | Bearer (user) |
 
 Header: `X-MK-API-Version: 1`, `Authorization: Bearer <token>`
@@ -75,7 +81,7 @@ Odgovor: `{ "access_token": "...", "expires_in": 86400 }`
 | POST | `/login` |
 | GET | `/me`, `/stats`, `/users`, `/messages` |
 | GET | `/users/:deviceId`, `/messages/:sessionId` |
-| DELETE | `/messages/:sessionId` |
+| DELETE | `/users/:deviceId`, `/messages/:sessionId` |
 | GET/PUT | `/settings/operating-status` |
 | GET/PUT | `/settings/system-message` |
 
@@ -112,6 +118,27 @@ PUT /admin/settings/system-message
   "severity": "warning"
 }
 ```
+
+## E2E enkripcija preko servera
+
+Server **ne dešifrira** audio — drži samo ciphertext i omotane session ključeve:
+
+1. `GET /users/peers` — javni P256 ključevi ostalih uređaja  
+2. `POST /messages` — nova sesija  
+3. `POST /messages/:id/key-offers` — pošiljatelj šalje ECDH-om omotane ključeve po `recipient_device_id`  
+4. `POST chunks` + `complete` — enkriptirani audio  
+5. Primatelj: `GET /messages/inbox` → `GET /messages/:id/delivery` (wrapped_key + chunks + sender public key)
+
+iOS helperi: `deliverSessionKeyOffersToAllPeers`, `downloadAndDecryptMessage`.
+
+## Web admin panel
+
+Otvori `/admin` u browseru:
+
+- prijava adminom  
+- pregled korisnika + brisanje  
+- **App na spavanje** — gasi iOS app (`operating-status`)  
+- sistemska obavijest (banner u appu)
 
 ## Glasovne poruke u RAM-u
 

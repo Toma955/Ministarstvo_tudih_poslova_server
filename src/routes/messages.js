@@ -7,9 +7,12 @@ import {
   getActiveSession,
   getCompletedMessage,
   addEncryptedChunk,
+  addKeyOffer,
   completeVoiceSession,
   applyFeedback,
   feedbackState,
+  listInboxForDevice,
+  getDeliveryPackage,
 } from "../stores/voiceMessageStore.js";
 
 const router = Router();
@@ -22,6 +25,13 @@ function requireUser(req, res) {
   }
   return deviceId;
 }
+
+router.get("/inbox", authMiddleware(), (req, res) => {
+  const deviceId = requireUser(req, res);
+  if (!deviceId) return;
+
+  res.json({ messages: listInboxForDevice(deviceId) });
+});
 
 router.post("/", authMiddleware(), (req, res) => {
   const deviceId = requireUser(req, res);
@@ -42,6 +52,49 @@ router.post("/", authMiddleware(), (req, res) => {
   });
 
   res.status(201).json({ session_id: sessionId });
+});
+
+router.post("/:sessionId/key-offers", authMiddleware(), (req, res) => {
+  const deviceId = requireUser(req, res);
+  if (!deviceId) return;
+
+  const { sessionId } = req.params;
+  const offers = req.body?.offers;
+
+  if (!Array.isArray(offers) || offers.length === 0) {
+    return res.status(400).json({
+      error: "invalid_request",
+      message: "offers mora biti neprazan niz.",
+    });
+  }
+
+  const session = getActiveSession(sessionId);
+  if (!session) {
+    return res.status(404).json({ error: "not_found", message: "Sesija nije pronađena." });
+  }
+
+  if (session.sender_device_id !== deviceId) {
+    return res.status(403).json({ error: "forbidden", message: "Sesija pripada drugom korisniku." });
+  }
+
+  for (const offer of offers) {
+    const recipientId = offer.recipient_device_id;
+    const ciphertext = offer.ciphertext_base64;
+    const version = offer.encryption_version ?? 1;
+
+    if (!recipientId || !ciphertext) {
+      return res.status(400).json({
+        error: "invalid_request",
+        message: "Svaki offer treba recipient_device_id i ciphertext_base64.",
+      });
+    }
+
+    if (recipientId === deviceId) continue;
+
+    addKeyOffer(sessionId, recipientId, version, ciphertext);
+  }
+
+  res.json({ ok: true, count: offers.length });
 });
 
 router.post("/:sessionId/chunks", authMiddleware(), (req, res) => {
@@ -104,6 +157,27 @@ router.post("/:sessionId/complete", authMiddleware(), (req, res) => {
 
   completeVoiceSession(sessionId, resolvedName, sequence);
   res.json({});
+});
+
+router.get("/:sessionId/delivery", authMiddleware(), (req, res) => {
+  const deviceId = requireUser(req, res);
+  if (!deviceId) return;
+
+  const { sessionId } = req.params;
+  const payload = getDeliveryPackage(sessionId, deviceId);
+
+  if (!payload) {
+    return res.status(404).json({
+      error: "not_found",
+      message: "Poruka nije dostupna za ovaj uređaj.",
+    });
+  }
+
+  const sender = getUser(payload.sender_device_id);
+  res.json({
+    ...payload,
+    sender_public_key_base64: sender?.public_key_base64 || null,
+  });
 });
 
 router.post("/:sessionId/feedback", authMiddleware(), (req, res) => {

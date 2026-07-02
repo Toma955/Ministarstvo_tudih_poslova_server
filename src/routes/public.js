@@ -32,6 +32,7 @@ router.get("/system-message", (_req, res) => {
     title: message.title || null,
     message: message.message || "",
     severity: message.severity || "info",
+    blocks_app: Boolean(message.blocks_app),
   });
 });
 

@@ -262,7 +262,7 @@ export function getDeliveryPackage(sessionId, recipientDeviceId) {
       sender_name: message.sender_name,
       source_type: "server",
       sequence: message.sequence,
-      is_complete: Boolean(message.completed_at),
+      is_complete: Boolean(message.completed_at || message.completed),
       is_plaintext: true,
       wrapped_key: null,
       chunks: serializeChunks(message.chunks, true),
@@ -278,7 +278,7 @@ export function getDeliveryPackage(sessionId, recipientDeviceId) {
     sender_name: message.sender_name,
     source_type: message.source_type || "radio",
     sequence: message.sequence,
-    is_complete: Boolean(message.completed_at),
+    is_complete: Boolean(message.completed_at || message.completed),
     is_plaintext: false,
     wrapped_key: {
       encryption_version: keyOffer.version,

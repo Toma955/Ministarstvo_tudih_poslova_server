@@ -74,11 +74,15 @@ router.post("/:sessionId/key-offers", authMiddleware(), (req, res) => {
   const { sessionId } = req.params;
   const offers = req.body?.offers;
 
-  if (!Array.isArray(offers) || offers.length === 0) {
+  if (!Array.isArray(offers)) {
     return res.status(400).json({
       error: "invalid_request",
-      message: "offers mora biti neprazan niz.",
+      message: "offers mora biti niz.",
     });
+  }
+
+  if (offers.length === 0) {
+    return res.json({ ok: true, count: 0, skipped: 0 });
   }
 
   const session = getMessageRecord(sessionId);
@@ -206,11 +210,17 @@ router.post("/:sessionId/complete", authMiddleware(), (req, res) => {
     });
   }
 
+  const keyOfferCount = completed.key_offers?.size ?? 0;
+
   notifyVoiceMessageRecipients(completed).catch((error) => {
     console.warn("[push] notify failed", error.message);
   });
 
-  res.json({});
+  res.json({
+    ok: true,
+    key_offer_count: keyOfferCount,
+    chunk_count: completed.chunk_count ?? 0,
+  });
 });
 
 router.get("/:sessionId/delivery", authMiddleware(), (req, res) => {

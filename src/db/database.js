@@ -288,7 +288,10 @@ export function joinRoom({ deviceId, roomCode, publicKeyBase64, displayName }) {
     display_name: name || existing?.display_name || "",
     sender_name: name || existing?.sender_name || "Nepoznato",
     avatar_jpeg_base64: existing?.avatar_jpeg_base64 || null,
-    public_key_base64: publicKeyBase64 || existing?.public_key_base64 || null,
+    public_key_base64:
+      typeof publicKeyBase64 === "string" && publicKeyBase64.trim()
+        ? publicKeyBase64.trim()
+        : existing?.public_key_base64 || null,
     room_code: normalizedRoom,
     is_base_station: existing?.is_base_station || 0,
   });

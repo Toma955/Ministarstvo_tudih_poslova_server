@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { authMiddleware } from "../middleware/auth.js";
-import { getUser, listPeerUsers } from "../db/database.js";
+import { getUser, listPeerUsers, profileResponseFromRow } from "../db/database.js";
 
 const router = Router();
 
@@ -26,6 +26,8 @@ router.get("/peers", authMiddleware(), (req, res) => {
     device_id: peer.device_id,
     display_name: peer.display_name,
     sender_name: peer.sender_name,
+    avatar_jpeg_base64: peer.avatar_jpeg_base64 || null,
+    initials: profileResponseFromRow(peer).initials,
     public_key_base64: peer.public_key_base64,
     is_base_station: Boolean(peer.is_base_station),
   }));

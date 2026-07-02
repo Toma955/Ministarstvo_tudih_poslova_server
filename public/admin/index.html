@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Admin — Ministarstvo tuđih poslova</title>
+  <title>Admin — Ministarstvo drugih poslova</title>
   <style>
     :root {
       --bg-top: #0836c1;
@@ -115,7 +115,7 @@
 <body>
   <div class="wrap">
     <div id="loginView">
-      <h1>Ministarstvo tuđih poslova</h1>
+      <h1>Ministarstvo drugih poslova</h1>
       <p class="subtitle">Sektor za komunikacije — admin prijava</p>
       <div class="card" style="max-width: 420px;">
         <h2>Prijava</h2>
@@ -151,14 +151,11 @@
 
         <div class="row" style="margin-top:12px">
           <div>
-            <label for="broadcastRoom">Soba</label>
-            <select id="broadcastRoom"></select>
-          </div>
-          <div>
             <label for="broadcastSender">Pošiljatelj</label>
             <input id="broadcastSender" value="Centrala" placeholder="Centrala">
           </div>
         </div>
+        <input type="hidden" id="broadcastRoom" value="">
 
         <div class="actions" style="margin-top:12px">
           <button id="recordBroadcastBtn" type="button">Snimi poruku</button>
@@ -253,39 +250,15 @@
       </div>
 
       <div class="card">
-        <h2>Sobe (ključevi za korisnike)</h2>
+        <h2>Glavni kanal</h2>
         <p style="color:var(--muted);margin-top:0;font-size:0.9rem">
-          Kreirajte sobu ovdje. Korisnici u appu moraju unijeti točan ključ sobe — sami je ne mogu izmisliti.
+          Svi korisnici se automatski spajaju na jedan kanal. Push obavijesti (APNs) budi telefon kad stigne nova poruka.
         </p>
-        <div class="row">
-          <div>
-            <label for="newRoomCode">Ključ sobe</label>
-            <input id="newRoomCode" placeholder="npr. sektor-7" autocomplete="off">
-          </div>
-          <div>
-            <label for="newRoomTitle">Naziv (opcionalno)</label>
-            <input id="newRoomTitle" placeholder="Sektor 7">
-          </div>
-        </div>
+        <p id="channelInfo" style="margin-top:12px;font-size:0.95rem"></p>
         <div class="actions" style="margin-top:12px">
-          <button id="createRoomBtn" type="button">Kreiraj sobu</button>
+          <button class="secondary" id="toggleChannelBtn" type="button">Uključi / isključi kanal</button>
         </div>
-        <p id="roomCreateMsg" class="success hidden"></p>
-        <div style="overflow-x:auto;margin-top:16px">
-          <table>
-            <thead>
-              <tr>
-                <th>Ključ</th>
-                <th>Naziv</th>
-                <th>Korisnici</th>
-                <th>Status</th>
-                <th>Kreirano</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody id="roomsBody"></tbody>
-          </table>
-        </div>
+        <p id="channelMsg" class="success hidden"></p>
       </div>
 
       <div class="card">
@@ -365,8 +338,7 @@
       document.getElementById("sysMessage").value = system.message || "";
 
       renderUsers(users.users || []);
-      renderRooms(rooms.rooms || []);
-      populateBroadcastRooms(rooms.rooms || []);
+      renderChannel(rooms.rooms || []);
       renderMessages(messages.messages || []);
     }
 
@@ -430,16 +402,30 @@
       });
     }
 
-    function populateBroadcastRooms(rooms) {
-      const select = document.getElementById("broadcastRoom");
-      const active = rooms.filter((r) => r.is_active);
-      if (!active.length) {
-        select.innerHTML = "<option value=''>— nema aktivnih soba —</option>";
+    function renderChannel(rooms) {
+      const info = document.getElementById("channelInfo");
+      const hiddenRoom = document.getElementById("broadcastRoom");
+      const toggleBtn = document.getElementById("toggleChannelBtn");
+      const channel = rooms[0];
+
+      if (!channel) {
+        info.textContent = "Kanal još nije inicijaliziran — pokrenite server ponovno.";
+        hiddenRoom.value = "";
+        toggleBtn.disabled = true;
         return;
       }
-      select.innerHTML = active.map((r) =>
-        `<option value="${escapeHtml(r.room_code)}">${escapeHtml(r.room_code)}${r.title ? " — " + escapeHtml(r.title) : ""}</option>`
-      ).join("");
+
+      hiddenRoom.value = channel.room_code;
+      toggleBtn.disabled = false;
+      toggleBtn.dataset.roomCode = channel.room_code;
+      toggleBtn.dataset.nextActive = channel.is_active ? "0" : "1";
+      toggleBtn.textContent = channel.is_active ? "Isključi kanal" : "Uključi kanal";
+
+      info.innerHTML =
+        `<strong>${escapeHtml(channel.room_code)}</strong>` +
+        (channel.title ? ` — ${escapeHtml(channel.title)}` : "") +
+        `<br><span style="color:var(--muted)">Povezanih korisnika: ${channel.member_count}</span>` +
+        `<br><span class="badge ${channel.is_active ? "on" : "off"}">${channel.is_active ? "Aktivan" : "Isključen"}</span>`;
     }
 
     let mediaRecorder = null;
@@ -493,7 +479,7 @@
       msg.classList.add("hidden");
       const roomCode = document.getElementById("broadcastRoom").value;
       if (!roomCode) {
-        alert("Odaberite sobu.");
+        alert("Kanal nije spreman.");
         return;
       }
       if (!recordedBlob) {
@@ -512,7 +498,7 @@
             wav_base64: wavBase64,
           }),
         });
-        msg.textContent = "Poruka poslana u sobu " + data.room_code + " (server).";
+        msg.textContent = "Poruka poslana na kanal " + data.room_code + ".";
         msg.className = "success";
         msg.classList.remove("hidden");
         recordedBlob = null;
@@ -579,52 +565,6 @@
       }
 
       return arrayBuffer;
-    }
-
-    function renderRooms(rooms) {
-      const body = document.getElementById("roomsBody");
-      if (!rooms.length) {
-        body.innerHTML = "<tr><td colspan='6' style='color:var(--muted)'>Nema kreiranih soba. Kreirajte prvu iznad.</td></tr>";
-        return;
-      }
-      body.innerHTML = rooms.map((room) => `
-        <tr>
-          <td><span class="room-key">${escapeHtml(room.room_code)}</span></td>
-          <td>${escapeHtml(room.title || "—")}</td>
-          <td>${room.member_count}</td>
-          <td><span class="badge ${room.is_active ? "on" : "off"}">${room.is_active ? "Aktivna" : "Isključena"}</span></td>
-          <td>${escapeHtml((room.created_at || "").replace("T", " ").slice(0, 16))}</td>
-          <td class="actions">
-            <button class="secondary" data-toggle-room="${escapeHtml(room.room_code)}" data-active="${room.is_active ? "0" : "1"}" type="button">${room.is_active ? "Isključi" : "Uključi"}</button>
-            <button class="danger" data-delete-room="${escapeHtml(room.room_code)}" type="button">Obriši</button>
-          </td>
-        </tr>
-      `).join("");
-
-      body.querySelectorAll("[data-toggle-room]").forEach((btn) => {
-        btn.addEventListener("click", async () => {
-          const code = btn.getAttribute("data-toggle-room");
-          const isActive = btn.getAttribute("data-active") === "1";
-          await api("/admin/rooms/" + encodeURIComponent(code), {
-            method: "PATCH",
-            body: JSON.stringify({ is_active: isActive }),
-          });
-          loadDashboard();
-        });
-      });
-
-      body.querySelectorAll("[data-delete-room]").forEach((btn) => {
-        btn.addEventListener("click", async () => {
-          const code = btn.getAttribute("data-delete-room");
-          if (!confirm("Obrisati sobu " + code + "?")) return;
-          try {
-            await api("/admin/rooms/" + encodeURIComponent(code), { method: "DELETE" });
-            loadDashboard();
-          } catch (e) {
-            alert(e.message);
-          }
-        });
-      });
     }
 
     function renderUsers(users) {
@@ -766,20 +706,19 @@
 
     document.getElementById("refreshUsersBtn").addEventListener("click", loadDashboard);
 
-    document.getElementById("createRoomBtn").addEventListener("click", async () => {
-      const msg = document.getElementById("roomCreateMsg");
+    document.getElementById("toggleChannelBtn").addEventListener("click", async () => {
+      const btn = document.getElementById("toggleChannelBtn");
+      const msg = document.getElementById("channelMsg");
       msg.classList.add("hidden");
+      const code = btn.dataset.roomCode;
+      const isActive = btn.dataset.nextActive === "1";
+      if (!code) return;
       try {
-        const data = await api("/admin/rooms", {
-          method: "POST",
-          body: JSON.stringify({
-            room_code: document.getElementById("newRoomCode").value.trim(),
-            title: document.getElementById("newRoomTitle").value.trim(),
-          }),
+        await api("/admin/rooms/" + encodeURIComponent(code), {
+          method: "PATCH",
+          body: JSON.stringify({ is_active: isActive }),
         });
-        document.getElementById("newRoomCode").value = "";
-        document.getElementById("newRoomTitle").value = "";
-        msg.textContent = "Soba kreirana: " + data.room.room_code;
+        msg.textContent = isActive ? "Kanal je uključen." : "Kanal je isključen.";
         msg.classList.remove("hidden");
         loadDashboard();
       } catch (e) {

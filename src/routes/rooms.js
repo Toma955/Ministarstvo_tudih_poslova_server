@@ -1,7 +1,8 @@
 import { Router } from "express";
 import { config } from "../config.js";
 import { signToken, authMiddleware } from "../middleware/auth.js";
-import { joinRoom, getUser, normalizeRoomCode } from "../db/database.js";
+import { joinRoom, getUser, ensureDefaultRoom } from "../db/database.js";
+import { isApnsConfigured } from "../services/apns.js";
 
 const router = Router();
 
@@ -19,6 +20,15 @@ const joinErrors = {
     message: "Soba je deaktivirana. Obratite se administraciji.",
   },
 };
+
+router.get("/config", (_req, res) => {
+  ensureDefaultRoom();
+  res.json({
+    default_room_code: config.defaultRoomCode,
+    default_room_title: config.defaultRoomTitle,
+    apns_configured: isApnsConfigured(),
+  });
+});
 
 router.post("/join", (req, res) => {
   const {
@@ -69,6 +79,7 @@ router.post("/join", (req, res) => {
     expires_in: config.jwtExpiresIn,
     room_code: user.room_code,
     device_id: user.device_id,
+    room_member_count: result.room_member_count ?? 1,
   });
 });
 

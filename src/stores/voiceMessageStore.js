@@ -136,19 +136,19 @@ export function getMessageRecord(sessionId) {
 }
 
 export function addKeyOffer(sessionId, recipientDeviceId, encryptionVersion, ciphertextBase64) {
-  const session = getActiveSession(sessionId);
-  if (!session || session.plaintext) return null;
+  const message = getMessageRecord(sessionId);
+  if (!message || message.plaintext) return null;
 
-  if (!session.key_offers) {
-    session.key_offers = new Map();
+  if (!message.key_offers) {
+    message.key_offers = new Map();
   }
 
-  session.key_offers.set(recipientDeviceId, {
+  message.key_offers.set(recipientDeviceId, {
     version: encryptionVersion,
     ciphertext_base64: ciphertextBase64,
   });
 
-  return session;
+  return message;
 }
 
 export function addEncryptedChunk(sessionId, sequence, encryptionVersion, ciphertextBase64) {
@@ -412,6 +412,21 @@ export function feedbackState(sessionId) {
     base_feedback: message.base_feedback,
     person_feedback: message.person_feedback,
   };
+}
+
+export function purgeStaleActiveSessions(maxAgeMs = 15 * 60 * 1000) {
+  const cutoff = Date.now() - maxAgeMs;
+  let removed = 0;
+
+  for (const [sessionId, session] of activeSessions.entries()) {
+    const createdAt = Date.parse(session.created_at || "");
+    if (!Number.isFinite(createdAt) || createdAt < cutoff) {
+      activeSessions.delete(sessionId);
+      removed += 1;
+    }
+  }
+
+  return removed;
 }
 
 export function memoryStats() {

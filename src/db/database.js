@@ -44,6 +44,12 @@ db.exec(`
     is_active INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
+
+  CREATE TABLE IF NOT EXISTS device_push_tokens (
+    device_id TEXT PRIMARY KEY,
+    apns_token TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
 `);
 
 function ensureAdmin() {
@@ -87,6 +93,17 @@ function ensureDefaultAppSettings() {
 ensureAdmin();
 ensureDefaultAppSettings();
 ensureUserColumns();
+ensureDefaultRoom();
+
+export function ensureDefaultRoom() {
+  const code = config.defaultRoomCode;
+  const title = config.defaultRoomTitle;
+  const existing = db.prepare("SELECT room_code FROM rooms WHERE room_code = ?").get(code);
+  if (existing) return;
+
+  db.prepare("INSERT INTO rooms (room_code, title, is_active) VALUES (?, ?, 1)").run(code, title);
+  console.log(`[db] Default kanal kreiran: ${code}`);
+}
 
 function ensureUserColumns() {
   const columns = db.prepare("PRAGMA table_info(users)").all();
@@ -130,7 +147,20 @@ export function upsertUser(user) {
       room_code = COALESCE(excluded.room_code, users.room_code),
       is_base_station = excluded.is_base_station,
       updated_at = datetime('now')
-  `).run(user);
+  `).run({
+    room_code: null,
+    ...user,
+  });
+}
+
+export function countUsersInRoom(roomCode) {
+  const normalized = normalizeRoomCode(roomCode);
+  if (!normalized) return 0;
+
+  const row = db
+    .prepare("SELECT COUNT(*) AS count FROM users WHERE room_code = ?")
+    .get(normalized);
+  return row?.count ?? 0;
 }
 
 export function listUsers() {
@@ -144,7 +174,7 @@ export function listPeerUsers(excludeDeviceId, roomCode) {
   if (!roomCode) return [];
 
   return db.prepare(`
-    SELECT device_id, display_name, sender_name, public_key_base64, is_base_station
+    SELECT device_id, display_name, sender_name, avatar_jpeg_base64, public_key_base64, is_base_station
     FROM users
     WHERE device_id != ?
       AND room_code = ?
@@ -238,7 +268,8 @@ export function deleteRoom(roomCode) {
 }
 
 export function joinRoom({ deviceId, roomCode, publicKeyBase64, displayName }) {
-  const normalizedRoom = normalizeRoomCode(roomCode);
+  const normalizedRoom =
+    normalizeRoomCode(roomCode) || normalizeRoomCode(config.defaultRoomCode);
   if (!normalizedRoom) return { error: "invalid_format" };
 
   const room = getRoom(normalizedRoom);
@@ -258,12 +289,49 @@ export function joinRoom({ deviceId, roomCode, publicKeyBase64, displayName }) {
     is_base_station: existing?.is_base_station || 0,
   });
 
-  return { user: getUser(deviceId) };
+  return {
+    user: getUser(deviceId),
+    room_member_count: countUsersInRoom(normalizedRoom),
+  };
 }
 
 export function deleteUser(deviceId) {
+  db.prepare("DELETE FROM device_push_tokens WHERE device_id = ?").run(deviceId);
   const result = db.prepare("DELETE FROM users WHERE device_id = ?").run(deviceId);
   return result.changes > 0;
+}
+
+export function upsertPushToken(deviceId, apnsToken) {
+  db.prepare(
+    `INSERT INTO device_push_tokens (device_id, apns_token, updated_at)
+     VALUES (?, ?, datetime('now'))
+     ON CONFLICT(device_id) DO UPDATE SET
+       apns_token = excluded.apns_token,
+       updated_at = datetime('now')`
+  ).run(deviceId, apnsToken);
+}
+
+export function deletePushToken(deviceId) {
+  db.prepare("DELETE FROM device_push_tokens WHERE device_id = ?").run(deviceId);
+}
+
+export function getPushTokensForDevices(deviceIds) {
+  if (!deviceIds?.length) return [];
+  const placeholders = deviceIds.map(() => "?").join(",");
+  return db
+    .prepare(
+      `SELECT device_id, apns_token FROM device_push_tokens WHERE device_id IN (${placeholders})`
+    )
+    .all(...deviceIds);
+}
+
+export function listDeviceIdsInRoom(roomCode) {
+  const normalized = normalizeRoomCode(roomCode);
+  if (!normalized) return [];
+  return db
+    .prepare("SELECT device_id FROM users WHERE room_code = ?")
+    .all(normalized)
+    .map((row) => row.device_id);
 }
 
 export function getAdminByUsername(username) {

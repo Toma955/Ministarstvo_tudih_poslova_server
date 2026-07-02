@@ -14,6 +14,7 @@ import {
   listInboxForDevice,
   getDeliveryPackage,
 } from "../stores/voiceMessageStore.js";
+import { notifyVoiceMessageRecipients } from "../services/notifications.js";
 
 const router = Router();
 
@@ -38,6 +39,13 @@ router.post("/", authMiddleware(), (req, res) => {
   if (!deviceId) return;
 
   const user = getUser(deviceId);
+  if (!user?.room_code) {
+    return res.status(403).json({
+      error: "forbidden",
+      message: "Niste u sobi. Unesite ključ sobe u aplikaciji.",
+    });
+  }
+
   const senderName =
     (typeof req.body?.sender_name === "string" && req.body.sender_name.trim()) ||
     user?.sender_name ||
@@ -81,6 +89,9 @@ router.post("/:sessionId/key-offers", authMiddleware(), (req, res) => {
     return res.status(403).json({ error: "forbidden", message: "Sesija pripada drugom korisniku." });
   }
 
+  const sender = getUser(deviceId);
+  let applied = 0;
+
   for (const offer of offers) {
     const recipientId = offer.recipient_device_id;
     const ciphertext = offer.ciphertext_base64;
@@ -95,10 +106,25 @@ router.post("/:sessionId/key-offers", authMiddleware(), (req, res) => {
 
     if (recipientId === deviceId) continue;
 
-    addKeyOffer(sessionId, recipientId, version, ciphertext);
+    const recipient = getUser(recipientId);
+    if (!recipient?.room_code || recipient.room_code !== sender?.room_code) {
+      return res.status(403).json({
+        error: "forbidden",
+        message: "Primatelj nije u istoj sobi.",
+      });
+    }
+
+    const result = addKeyOffer(sessionId, recipientId, version, ciphertext);
+    if (!result) {
+      return res.status(409).json({
+        error: "conflict",
+        message: "Key offer nije moguće spremiti za ovu sesiju.",
+      });
+    }
+    applied += 1;
   }
 
-  res.json({ ok: true, count: offers.length });
+  res.json({ ok: true, count: applied });
 });
 
 router.post("/:sessionId/chunks", authMiddleware(), (req, res) => {
@@ -128,7 +154,14 @@ router.post("/:sessionId/chunks", authMiddleware(), (req, res) => {
     return res.status(403).json({ error: "forbidden", message: "Sesija pripada drugom korisniku." });
   }
 
-  addEncryptedChunk(sessionId, sequence, encryptionVersion, ciphertextBase64);
+  const chunk = addEncryptedChunk(sessionId, sequence, encryptionVersion, ciphertextBase64);
+  if (!chunk) {
+    return res.status(409).json({
+      error: "conflict",
+      message: "Chunk nije moguće spremiti. Sesija je završena ili ne postoji.",
+    });
+  }
+
   res.json({});
 });
 
@@ -159,7 +192,18 @@ router.post("/:sessionId/complete", authMiddleware(), (req, res) => {
     user?.sender_name ||
     "Nepoznato";
 
-  completeVoiceSession(sessionId, resolvedName, sequence);
+  const completed = completeVoiceSession(sessionId, resolvedName, sequence);
+  if (!completed) {
+    return res.status(409).json({
+      error: "conflict",
+      message: "Sesija nije mogla biti završena.",
+    });
+  }
+
+  notifyVoiceMessageRecipients(completed).catch((error) => {
+    console.warn("[push] notify failed", error.message);
+  });
+
   res.json({});
 });
 

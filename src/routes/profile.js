@@ -45,6 +45,7 @@ router.put("/", authMiddleware(), (req, res) => {
     avatar_jpeg_base64:
       typeof avatarBase64 === "string" ? avatarBase64 : existing?.avatar_jpeg_base64 || null,
     public_key_base64: existing?.public_key_base64 || null,
+    room_code: existing?.room_code ?? null,
     is_base_station: existing?.is_base_station || 0,
   });
 
@@ -74,6 +75,7 @@ router.patch("/base-station", authMiddleware(), (req, res) => {
     sender_name: existing.sender_name,
     avatar_jpeg_base64: existing.avatar_jpeg_base64,
     public_key_base64: existing.public_key_base64,
+    room_code: existing.room_code ?? null,
     is_base_station: isBaseStation ? 1 : 0,
   });
 

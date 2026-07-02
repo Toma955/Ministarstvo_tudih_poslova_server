@@ -23,8 +23,10 @@ import {
   getCompletedMessage,
   createServerBroadcast,
   getAdminMessageAudio,
+  purgeUserFromMemory,
   uuidv4,
 } from "../stores/voiceMessageStore.js";
+import { notifyVoiceMessageRecipients } from "../services/notifications.js";
 
 const router = Router();
 
@@ -82,6 +84,7 @@ router.get("/users/:deviceId", authMiddleware("admin"), (req, res) => {
 });
 
 router.delete("/users/:deviceId", authMiddleware("admin"), (req, res) => {
+  purgeUserFromMemory(req.params.deviceId);
   const deleted = deleteUser(req.params.deviceId);
   if (!deleted) {
     return res.status(404).json({ error: "not_found", message: "Korisnik nije pronađen." });
@@ -176,11 +179,12 @@ router.get("/messages", authMiddleware("admin"), (_req, res) => {
 router.post("/messages/broadcast", authMiddleware("admin"), (req, res) => {
   const { room_code: roomCode, sender_name: senderName, wav_base64: wavBase64 } = req.body || {};
 
-  const normalizedRoom = normalizeRoomCode(roomCode);
+  const normalizedRoom =
+    normalizeRoomCode(roomCode) || normalizeRoomCode(config.defaultRoomCode);
   if (!normalizedRoom) {
     return res.status(400).json({
       error: "invalid_request",
-      message: "room_code je obavezan i mora biti valjan.",
+      message: "Kanal nije konfiguriran.",
     });
   }
 
@@ -222,6 +226,10 @@ router.post("/messages/broadcast", authMiddleware("admin"), (req, res) => {
     senderName:
       (typeof senderName === "string" && senderName.trim()) || "Centrala",
     wavBuffer,
+  });
+
+  notifyVoiceMessageRecipients(message).catch((error) => {
+    console.warn("[push] broadcast notify failed", error.message);
   });
 
   res.status(201).json({

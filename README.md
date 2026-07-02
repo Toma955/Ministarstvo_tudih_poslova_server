@@ -2,6 +2,10 @@
 
 Node.js backend za **Ministarstvo Komunikacija** iOS app. SQLite baza za korisnike i admin postavke; glasovne poruke se drže u RAM-u (max 10).
 
+**Jedan kanal:** svi korisnici se automatski spajaju na `DEFAULT_ROOM_CODE` (default: `kanal`). Nema više unosa ključa sobe u appu.
+
+**Push obavijesti (APNs):** kad stigne nova glasovna poruka, server šalje push primateljima u kanalu (telefon koji spava dobije obavijest).
+
 ## Pokretanje lokalno
 
 ```bash
@@ -25,23 +29,26 @@ Server: `http://localhost:8080`
    - `JWT_SECRET` (generiraj dugi random string)
    - `ADMIN_PASSWORD` (jaka lozinka)
    - `CORS_ORIGIN` (opcionalno)
+   - `DEFAULT_ROOM_CODE` (default: `kanal`)
+   - `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_KEY_P8` (sadržaj .p8 ključa, s `\n` za nove redove)
+   - `APNS_BUNDLE_ID` (`TomaPrivate.Ministarstvo-Komunikacija`)
+   - `APNS_PRODUCTION` (`true` za App Store, inače sandbox)
 
 **Napomena:** SQLite datoteka na Render free tieru nije trajna između redeploya. Za produkciju razmotri persistent disk ili PostgreSQL.
 
 ## iOS app
 
-U appu uključi server u `ChannelServerConfiguration`:
+U appu je server uključen preko `ChannelServerConfiguration` (`isEnabled: true`, Render URL). App se **automatski** spaja na kanal — korisnik ne unosi ključ.
 
-- `isEnabled: true`
-- `baseURL`: URL tvog Render servisa (npr. `https://mk-komunikacija-server.onrender.com`)
-
-Pri startu pozovi `registerDevice` s `device_id` i javnim ključem.
+Za push na fizičkom uređaju u Xcodeu uključi **Push Notifications** capability (entitlements već sadrže `aps-environment`).
 
 ## API — korisnici (`/api/v1`)
 
 | Metoda | Putanja | Auth |
 |--------|---------|------|
-| POST | `/auth/register` | ne |
+| POST | `/rooms/join` | ne — automatski kanal |
+| GET | `/rooms/config` | ne |
+| PUT | `/devices/push-token` | Bearer (user) |
 | GET | `/profile` | Bearer (user) |
 | PUT | `/profile` | Bearer (user) |
 | PATCH | `/profile/base-station` | Bearer (user) |
@@ -59,20 +66,22 @@ Pri startu pozovi `registerDevice` s `device_id` i javnim ključem.
 
 Header: `X-MK-API-Version: 1`, `Authorization: Bearer <token>`
 
-### Registracija uređaja
+### Spajanje na kanal
 
 ```http
-POST /api/v1/auth/register
+POST /api/v1/rooms/join
 Content-Type: application/json
 
 {
   "device_id": "UUID-uređaja",
   "public_key_base64": "...",
-  "display_name": "Ime"
+  "room_code": "kanal"
 }
 ```
 
-Odgovor: `{ "access_token": "...", "expires_in": 86400 }`
+`room_code` je opcionalan — ako ga nema, koristi se `DEFAULT_ROOM_CODE` s servera.
+
+Odgovor: `{ "access_token": "...", "room_code": "kanal", ... }`
 
 ## API — admin (`/admin`)
 
@@ -137,6 +146,8 @@ Otvori `/admin` u browseru:
 
 - prijava adminom  
 - pregled korisnika + brisanje  
+- **Glavni kanal** — uključi/isključi jedan operativni kanal  
+- slanje glasovne poruke s centrala (push na mobitele)  
 - **App na spavanje** — gasi iOS app (`operating-status`)  
 - sistemska obavijest (banner u appu)
 

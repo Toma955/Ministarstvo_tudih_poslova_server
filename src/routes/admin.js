@@ -18,6 +18,7 @@ import {
 } from "../db/database.js";
 import {
   listCompletedMessages,
+  listActiveSessionsForAdmin,
   deleteCompletedMessage,
   memoryStats,
   getCompletedMessage,
@@ -173,7 +174,13 @@ router.delete("/rooms/:roomCode", authMiddleware("admin"), (req, res) => {
 });
 
 router.get("/messages", authMiddleware("admin"), (_req, res) => {
-  res.json({ messages: listCompletedMessages() });
+  const completed = listCompletedMessages();
+  const active = listActiveSessionsForAdmin();
+  res.json({
+    messages: [...active, ...completed],
+    active_count: active.length,
+    completed_count: completed.length,
+  });
 });
 
 router.post("/messages/broadcast", authMiddleware("admin"), (req, res) => {

@@ -53,15 +53,27 @@ db.exec(`
 `);
 
 function ensureAdmin() {
-  const existing = db.prepare("SELECT id FROM admins WHERE username = ?").get(config.adminUsername);
-  if (existing) return;
-
+  const existing = db
+    .prepare("SELECT id, password_hash FROM admins WHERE username = ?")
+    .get(config.adminUsername);
   const hash = bcrypt.hashSync(config.adminPassword, 10);
-  db.prepare("INSERT INTO admins (username, password_hash) VALUES (?, ?)").run(
-    config.adminUsername,
-    hash
-  );
-  console.log(`[db] Admin kreiran: ${config.adminUsername}`);
+
+  if (!existing) {
+    db.prepare("INSERT INTO admins (username, password_hash) VALUES (?, ?)").run(
+      config.adminUsername,
+      hash
+    );
+    console.log(`[db] Admin kreiran: ${config.adminUsername}`);
+    return;
+  }
+
+  if (!bcrypt.compareSync(config.adminPassword, existing.password_hash)) {
+    db.prepare("UPDATE admins SET password_hash = ? WHERE username = ?").run(
+      hash,
+      config.adminUsername
+    );
+    console.log(`[db] Admin lozinka ažurirana: ${config.adminUsername}`);
+  }
 }
 
 function ensureDefaultAppSettings() {

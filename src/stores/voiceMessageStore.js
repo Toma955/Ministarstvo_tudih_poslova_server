@@ -209,34 +209,29 @@ export function getAdminMessageAudio(sessionId) {
   return message.wav_data;
 }
 
+function recipientCanSeeMessage(message, deviceId, userRoom) {
+  if (message.sender_device_id === deviceId) return false;
+
+  if (message.source_type === "server") {
+    return Boolean(userRoom && message.room_code === userRoom);
+  }
+
+  if (message.key_offers?.has(deviceId)) return true;
+  return Boolean(userRoom && message.room_code && message.room_code === userRoom);
+}
+
 export function listInboxForDevice(deviceId) {
   const user = getUser(deviceId);
   const userRoom = user?.room_code || null;
   const items = [];
 
   for (const session of activeSessions.values()) {
-    if (session.sender_device_id === deviceId) continue;
-
-    if (session.source_type === "server") {
-      if (!userRoom || session.room_code !== userRoom) continue;
-      items.push(inboxItemFromMessage(session, false));
-      continue;
-    }
-
-    if (!session.key_offers?.has(deviceId)) continue;
+    if (!recipientCanSeeMessage(session, deviceId, userRoom)) continue;
     items.push(inboxItemFromMessage(session, false));
   }
 
   for (const message of completedMessages) {
-    if (message.sender_device_id === deviceId) continue;
-
-    if (message.source_type === "server") {
-      if (!userRoom || message.room_code !== userRoom) continue;
-      items.push(inboxItemFromMessage(message, true));
-      continue;
-    }
-
-    if (!message.key_offers?.has(deviceId)) continue;
+    if (!recipientCanSeeMessage(message, deviceId, userRoom)) continue;
     items.push(inboxItemFromMessage(message, true));
   }
 
@@ -252,9 +247,11 @@ export function getDeliveryPackage(sessionId, recipientDeviceId) {
   if (!message) return null;
   if (message.sender_device_id === recipientDeviceId) return null;
 
+  const user = getUser(recipientDeviceId);
+  const userRoom = user?.room_code || null;
+
   if (message.source_type === "server" || message.plaintext) {
-    const user = getUser(recipientDeviceId);
-    if (!user?.room_code || message.room_code !== user.room_code) return null;
+    if (!userRoom || message.room_code !== userRoom) return null;
 
     return {
       session_id: sessionId,
@@ -268,6 +265,8 @@ export function getDeliveryPackage(sessionId, recipientDeviceId) {
       chunks: serializeChunks(message.chunks, true),
     };
   }
+
+  if (!userRoom || message.room_code !== userRoom) return null;
 
   const keyOffer = message.key_offers?.get(recipientDeviceId);
   if (!keyOffer) return null;
@@ -303,6 +302,26 @@ export function listCompletedMessages() {
     person_feedback_count: message.person_feedback.length,
     has_base_feedback: Boolean(message.base_feedback),
     has_audio: Boolean(message.wav_data),
+    is_complete: true,
+  }));
+}
+
+export function listActiveSessionsForAdmin() {
+  return [...activeSessions.values()].map((session) => ({
+    session_id: session.session_id,
+    sender_device_id: session.sender_device_id,
+    sender_name: session.sender_name,
+    source_type: session.source_type || "radio",
+    room_code: session.room_code || null,
+    chunk_count: session.chunks?.size ?? 0,
+    sequence: session.sequence,
+    created_at: session.created_at,
+    completed_at: null,
+    key_offer_count: session.key_offers?.size || 0,
+    person_feedback_count: 0,
+    has_base_feedback: false,
+    has_audio: false,
+    is_complete: false,
   }));
 }
 
@@ -414,7 +433,7 @@ export function feedbackState(sessionId) {
   };
 }
 
-export function purgeStaleActiveSessions(maxAgeMs = 15 * 60 * 1000) {
+export function purgeStaleActiveSessions(maxAgeMs = 30 * 60 * 1000) {
   const cutoff = Date.now() - maxAgeMs;
   let removed = 0;
 

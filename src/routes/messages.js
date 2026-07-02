@@ -19,6 +19,17 @@ import { notifyVoiceMessageRecipients } from "../services/notifications.js";
 
 const router = Router();
 
+function parseSequence(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.trunc(value);
+  }
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return Math.trunc(parsed);
+  }
+  return null;
+}
+
 function requireUser(req, res) {
   const deviceId = req.auth?.device_id;
   if (!deviceId || req.auth?.role !== "user") {
@@ -95,6 +106,7 @@ router.post("/:sessionId/key-offers", authMiddleware(), (req, res) => {
   }
 
   const sender = getUser(deviceId);
+  const sessionRoom = session.room_code || sender?.room_code || null;
   let applied = 0;
   let skipped = 0;
 
@@ -113,7 +125,7 @@ router.post("/:sessionId/key-offers", authMiddleware(), (req, res) => {
     if (recipientId === deviceId) continue;
 
     const recipient = getUser(recipientId);
-    if (!recipient?.room_code || recipient.room_code !== sender?.room_code) {
+    if (!sessionRoom || !recipient?.room_code || recipient.room_code !== sessionRoom) {
       skipped += 1;
       continue;
     }
@@ -126,15 +138,16 @@ router.post("/:sessionId/key-offers", authMiddleware(), (req, res) => {
     applied += 1;
   }
 
-  if (applied === 0 && skipped > 0) {
-    return res.status(409).json({
-      error: "conflict",
-      message: "Nijedan key offer nije primijenjen.",
-      skipped,
-    });
-  }
-
-  res.json({ ok: true, count: applied, skipped });
+  res.json({
+    ok: true,
+    count: applied,
+    skipped,
+    session_room: sessionRoom,
+    warning:
+      applied === 0 && skipped > 0
+        ? "Nijedan primatelj nije primio key offer (provjeri sobu i javne ključeve)."
+        : null,
+  });
 });
 
 router.post("/:sessionId/chunks", authMiddleware(), (req, res) => {
@@ -148,7 +161,8 @@ router.post("/:sessionId/chunks", authMiddleware(), (req, res) => {
     ciphertext_base64: ciphertextBase64,
   } = req.body || {};
 
-  if (typeof sequence !== "number" || !ciphertextBase64) {
+  const parsedSequence = parseSequence(sequence);
+  if (parsedSequence === null || !ciphertextBase64) {
     return res.status(400).json({
       error: "invalid_request",
       message: "sequence i ciphertext_base64 su obavezni.",
@@ -164,7 +178,12 @@ router.post("/:sessionId/chunks", authMiddleware(), (req, res) => {
     return res.status(403).json({ error: "forbidden", message: "Sesija pripada drugom korisniku." });
   }
 
-  const chunk = addEncryptedChunk(sessionId, sequence, encryptionVersion, ciphertextBase64);
+  const chunk = addEncryptedChunk(
+    sessionId,
+    parsedSequence,
+    encryptionVersion,
+    ciphertextBase64
+  );
   if (!chunk) {
     return res.status(409).json({
       error: "conflict",
@@ -172,7 +191,11 @@ router.post("/:sessionId/chunks", authMiddleware(), (req, res) => {
     });
   }
 
-  res.json({});
+  res.json({
+    ok: true,
+    chunk_count: chunk.chunks.size,
+    sequence: parsedSequence,
+  });
 });
 
 router.post("/:sessionId/complete", authMiddleware(), (req, res) => {
@@ -182,7 +205,8 @@ router.post("/:sessionId/complete", authMiddleware(), (req, res) => {
   const { sessionId } = req.params;
   const { sequence, sender_name: senderName } = req.body || {};
 
-  if (typeof sequence !== "number") {
+  const parsedSequence = parseSequence(sequence);
+  if (parsedSequence === null) {
     return res.status(400).json({ error: "invalid_request", message: "sequence je obavezan." });
   }
 
@@ -202,7 +226,7 @@ router.post("/:sessionId/complete", authMiddleware(), (req, res) => {
     user?.sender_name ||
     "Nepoznato";
 
-  const completed = completeVoiceSession(sessionId, resolvedName, sequence);
+  const completed = completeVoiceSession(sessionId, resolvedName, parsedSequence);
   if (!completed) {
     return res.status(409).json({
       error: "conflict",
@@ -211,6 +235,7 @@ router.post("/:sessionId/complete", authMiddleware(), (req, res) => {
   }
 
   const keyOfferCount = completed.key_offers?.size ?? 0;
+  const chunkCount = completed.chunk_count ?? 0;
 
   notifyVoiceMessageRecipients(completed).catch((error) => {
     console.warn("[push] notify failed", error.message);
@@ -219,7 +244,13 @@ router.post("/:sessionId/complete", authMiddleware(), (req, res) => {
   res.json({
     ok: true,
     key_offer_count: keyOfferCount,
-    chunk_count: completed.chunk_count ?? 0,
+    chunk_count: chunkCount,
+    warning:
+      chunkCount === 0
+        ? "Poruka završena bez audio chunkova."
+        : keyOfferCount === 0
+          ? "Poruka nema key offers — primatelji je neće moći dekriptirati."
+          : null,
   });
 });
 

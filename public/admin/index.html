@@ -137,6 +137,8 @@
         <button class="secondary" id="logoutBtn" type="button">Odjava</button>
       </div>
 
+      <p id="dashboardError" class="error hidden"></p>
+
       <div class="stats card">
         <div class="stat"><div class="num" id="statUsers">0</div><div class="lbl">Korisnici</div></div>
         <div class="stat"><div class="num" id="statMessages">0</div><div class="lbl">Poruke u RAM-u</div></div>
@@ -172,6 +174,7 @@
                 <th>Tip</th>
                 <th>Pošiljatelj</th>
                 <th>Soba</th>
+                <th>Chunk / ključ</th>
                 <th>Vrijeme</th>
                 <th></th>
               </tr>
@@ -285,6 +288,8 @@
 
   <script>
     const TOKEN_KEY = "mk_admin_token";
+    let defaultRoomCode = "kanal";
+
     const api = (path, opts = {}) => {
       const headers = { "Content-Type": "application/json", ...(opts.headers || {}) };
       const token = localStorage.getItem(TOKEN_KEY);
@@ -312,34 +317,50 @@
     }
 
     async function loadDashboard() {
-      const [me, stats, operating, system, users, rooms, messages] = await Promise.all([
-        api("/admin/me"),
-        api("/admin/stats"),
-        api("/admin/settings/operating-status"),
-        api("/admin/settings/system-message"),
-        api("/admin/users"),
-        api("/admin/rooms"),
-        api("/admin/messages"),
-      ]);
+      const dashboardError = document.getElementById("dashboardError");
+      try {
+        dashboardError.classList.add("hidden");
 
-      document.getElementById("adminName").textContent = me.username;
-      document.getElementById("statUsers").textContent = stats.users_count;
-      document.getElementById("statMessages").textContent = stats.memory.completed_messages;
-      document.getElementById("statStatus").textContent = operating.is_operational ? "ON" : "OFF";
+        const health = await fetch("/health").then((res) => res.json()).catch(() => ({}));
+        if (health.default_room) defaultRoomCode = health.default_room;
 
-      document.getElementById("operationalSelect").value = String(operating.is_operational);
-      document.getElementById("workingHours").value = operating.working_hours_label || "";
-      document.getElementById("operatingMessage").value = operating.message || "";
+        const [me, stats, operating, system, users, rooms, messages] = await Promise.all([
+          api("/admin/me"),
+          api("/admin/stats"),
+          api("/admin/settings/operating-status"),
+          api("/admin/settings/system-message"),
+          api("/admin/users"),
+          api("/admin/rooms"),
+          api("/admin/messages"),
+        ]);
 
-      document.getElementById("sysActive").value = String(system.is_active);
-      document.getElementById("sysBlocksApp").value = String(Boolean(system.blocks_app));
-      document.getElementById("sysSeverity").value = system.severity || "info";
-      document.getElementById("sysTitle").value = system.title || "";
-      document.getElementById("sysMessage").value = system.message || "";
+        document.getElementById("adminName").textContent = me.username;
+        document.getElementById("statUsers").textContent = stats.users_count;
+        document.getElementById("statMessages").textContent =
+          (stats.memory.active_sessions || 0) + (stats.memory.completed_messages || 0);
+        document.getElementById("statStatus").textContent = operating.is_operational ? "ON" : "OFF";
 
-      renderUsers(users.users || []);
-      renderChannel(rooms.rooms || []);
-      renderMessages(messages.messages || []);
+        document.getElementById("operationalSelect").value = String(operating.is_operational);
+        document.getElementById("workingHours").value = operating.working_hours_label || "";
+        document.getElementById("operatingMessage").value = operating.message || "";
+
+        document.getElementById("sysActive").value = String(system.is_active);
+        document.getElementById("sysBlocksApp").value = String(Boolean(system.blocks_app));
+        document.getElementById("sysSeverity").value = system.severity || "info";
+        document.getElementById("sysTitle").value = system.title || "";
+        document.getElementById("sysMessage").value = system.message || "";
+
+        renderUsers(users.users || []);
+        renderChannel(rooms.rooms || []);
+        renderMessages(messages.messages || []);
+      } catch (e) {
+        if (String(e.message).includes("401") || String(e.message).includes("403")) {
+          showLogin();
+          return;
+        }
+        dashboardError.textContent = "Dashboard nije učitan: " + e.message;
+        dashboardError.classList.remove("hidden");
+      }
     }
 
     function originLabel(type) {
@@ -357,19 +378,23 @@
     function renderMessages(messages) {
       const body = document.getElementById("messagesBody");
       if (!messages.length) {
-        body.innerHTML = "<tr><td colspan='5' style='color:var(--muted)'>Nema poruka u memoriji.</td></tr>";
+        body.innerHTML = "<tr><td colspan='6' style='color:var(--muted)'>Nema poruka u memoriji.</td></tr>";
         return;
       }
 
       body.innerHTML = messages.map((m) => `
         <tr>
-          <td><span class="${originClass(m.source_type)}">${escapeHtml(originLabel(m.source_type))}</span></td>
+          <td>
+            <span class="${originClass(m.source_type)}">${escapeHtml(originLabel(m.source_type))}</span>
+            ${m.is_complete === false ? `<span class="badge" style="margin-left:6px">LIVE</span>` : ""}
+          </td>
           <td>${escapeHtml(m.sender_name || "—")}</td>
           <td><code>${escapeHtml(m.room_code || "—")}</code></td>
+          <td><code>${escapeHtml(String(m.chunk_count || 0))} / ${escapeHtml(String(m.key_offer_count || 0))}</code></td>
           <td>${escapeHtml((m.completed_at || m.created_at || "").replace("T", " ").slice(0, 16))}</td>
           <td class="actions">
-            ${m.has_audio ? `<button class="secondary" data-play="${escapeHtml(m.session_id)}" type="button">▶ Slušaj</button>` : `<span style="color:var(--muted);font-size:0.8rem">E2E</span>`}
-            <button class="danger" data-delete-msg="${escapeHtml(m.session_id)}" type="button">Obriši</button>
+            ${m.has_audio ? `<button class="secondary" data-play="${escapeHtml(m.session_id)}" type="button">▶ Slušaj</button>` : `<span style="color:var(--muted);font-size:0.8rem">${m.is_complete === false ? "U tijeku" : "E2E"}</span>`}
+            ${m.is_complete !== false ? `<button class="danger" data-delete-msg="${escapeHtml(m.session_id)}" type="button">Obriši</button>` : ""}
           </td>
         </tr>
       `).join("");
@@ -406,7 +431,10 @@
       const info = document.getElementById("channelInfo");
       const hiddenRoom = document.getElementById("broadcastRoom");
       const toggleBtn = document.getElementById("toggleChannelBtn");
-      const channel = rooms[0];
+      const channel =
+        rooms.find((room) => room.room_code === defaultRoomCode) ||
+        rooms.find((room) => room.is_active) ||
+        rooms[0];
 
       if (!channel) {
         info.textContent = "Kanal još nije inicijaliziran — pokrenite server ponovno.";

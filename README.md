@@ -2,7 +2,7 @@
 
 Node.js backend za **Ministarstvo Komunikacija** iOS app. SQLite baza za korisnike i admin postavke; glasovne poruke se drže u RAM-u (max 10).
 
-**Jedan kanal:** svi korisnici se automatski spajaju na `DEFAULT_ROOM_CODE` (default: `kanal`). Nema više unosa ključa sobe u appu.
+**Jedan kanal:** admin upravlja jednim operativnim kanalom (`DEFAULT_ROOM_CODE`, default: `kanal`). Korisnik u appu **ručno unosi naziv kanala** koji dobije od administracije — nema stotina soba.
 
 **Push obavijesti (APNs):** kad stigne nova glasovna poruka, server šalje push primateljima u kanalu (telefon koji spava dobije obavijest).
 
@@ -38,7 +38,7 @@ Server: `http://localhost:8080`
 
 ## iOS app
 
-U appu je server uključen preko `ChannelServerConfiguration` (`isEnabled: true`, Render URL). App se **automatski** spaja na kanal — korisnik ne unosi ključ.
+U appu je server uključen preko `ChannelServerConfiguration` (`isEnabled: true`, Render URL). Korisnik unosi **naziv kanala** (npr. `kanal`) pri prvom spajanju; sesija se pamti na uređaju.
 
 Za push na fizičkom uređaju u Xcodeu uključi **Push Notifications** capability (entitlements već sadrže `aps-environment`).
 
@@ -46,7 +46,7 @@ Za push na fizičkom uređaju u Xcodeu uključi **Push Notifications** capabilit
 
 | Metoda | Putanja | Auth |
 |--------|---------|------|
-| POST | `/rooms/join` | ne — automatski kanal |
+| POST | `/rooms/join` | ne — korisnik šalje `room_code` |
 | GET | `/rooms/config` | ne |
 | PUT | `/devices/push-token` | Bearer (user) |
 | GET | `/profile` | Bearer (user) |

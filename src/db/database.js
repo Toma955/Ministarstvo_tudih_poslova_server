@@ -37,6 +37,13 @@ db.exec(`
     key TEXT PRIMARY KEY,
     value_json TEXT NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS rooms (
+    room_code TEXT PRIMARY KEY,
+    title TEXT NOT NULL DEFAULT '',
+    is_active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
 `);
 
 function ensureAdmin() {
@@ -147,9 +154,96 @@ export function listPeerUsers(excludeDeviceId, roomCode) {
   `).all(excludeDeviceId, roomCode);
 }
 
+export function normalizeRoomCode(roomCode) {
+  if (typeof roomCode !== "string") return null;
+  const normalized = roomCode.trim().toLowerCase();
+  if (!normalized || normalized.length < 2 || normalized.length > 32) return null;
+  if (!/^[a-z0-9\-_]+$/.test(normalized)) return null;
+  return normalized;
+}
+
+export function getRoom(roomCode) {
+  const normalized = normalizeRoomCode(roomCode);
+  if (!normalized) return null;
+  return db.prepare("SELECT * FROM rooms WHERE room_code = ?").get(normalized);
+}
+
+export function listRooms() {
+  return db
+    .prepare(`
+      SELECT
+        r.room_code,
+        r.title,
+        r.is_active,
+        r.created_at,
+        (
+          SELECT COUNT(*)
+          FROM users u
+          WHERE u.room_code = r.room_code
+        ) AS member_count
+      FROM rooms r
+      ORDER BY r.created_at DESC
+    `)
+    .all()
+    .map((row) => ({
+      room_code: row.room_code,
+      title: row.title || "",
+      is_active: Boolean(row.is_active),
+      created_at: row.created_at,
+      member_count: row.member_count,
+    }));
+}
+
+export function createRoom({ roomCode, title = "" }) {
+  const normalized = normalizeRoomCode(roomCode);
+  if (!normalized) return { error: "invalid_format" };
+  if (getRoom(normalized)) return { error: "already_exists" };
+
+  db.prepare(
+    "INSERT INTO rooms (room_code, title, is_active) VALUES (?, ?, 1)"
+  ).run(normalized, typeof title === "string" ? title.trim() : "");
+
+  return { room: getRoom(normalized) };
+}
+
+export function setRoomActive(roomCode, isActive) {
+  const normalized = normalizeRoomCode(roomCode);
+  if (!normalized || !getRoom(normalized)) return null;
+
+  db.prepare("UPDATE rooms SET is_active = ? WHERE room_code = ?").run(
+    isActive ? 1 : 0,
+    normalized
+  );
+
+  return getRoom(normalized);
+}
+
+export function deleteRoom(roomCode) {
+  const normalized = normalizeRoomCode(roomCode);
+  if (!normalized) return { error: "invalid_format" };
+
+  const room = getRoom(normalized);
+  if (!room) return { error: "not_found" };
+
+  const memberCount = db
+    .prepare("SELECT COUNT(*) AS count FROM users WHERE room_code = ?")
+    .get(normalized).count;
+
+  if (memberCount > 0) {
+    return { error: "not_empty", member_count: memberCount };
+  }
+
+  db.prepare("DELETE FROM rooms WHERE room_code = ?").run(normalized);
+  return { ok: true };
+}
+
 export function joinRoom({ deviceId, roomCode, publicKeyBase64, displayName }) {
   const normalizedRoom = normalizeRoomCode(roomCode);
-  if (!normalizedRoom) return null;
+  if (!normalizedRoom) return { error: "invalid_format" };
+
+  const room = getRoom(normalizedRoom);
+  if (!room) return { error: "not_found" };
+  if (!room.is_active) return { error: "inactive" };
 
   const existing = getUser(deviceId);
   const name = typeof displayName === "string" ? displayName.trim() : "";
@@ -164,15 +258,7 @@ export function joinRoom({ deviceId, roomCode, publicKeyBase64, displayName }) {
     is_base_station: existing?.is_base_station || 0,
   });
 
-  return getUser(deviceId);
-}
-
-export function normalizeRoomCode(roomCode) {
-  if (typeof roomCode !== "string") return null;
-  const normalized = roomCode.trim().toLowerCase();
-  if (!normalized || normalized.length < 2 || normalized.length > 32) return null;
-  if (!/^[a-z0-9\-_]+$/.test(normalized)) return null;
-  return normalized;
+  return { user: getUser(deviceId) };
 }
 
 export function deleteUser(deviceId) {

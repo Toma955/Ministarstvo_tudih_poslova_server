@@ -9,12 +9,21 @@ import {
   deleteUser,
   setAppSetting,
   getAppSetting,
+  listRooms,
+  createRoom,
+  setRoomActive,
+  deleteRoom,
+  getRoom,
+  normalizeRoomCode,
 } from "../db/database.js";
 import {
   listCompletedMessages,
   deleteCompletedMessage,
   memoryStats,
   getCompletedMessage,
+  createServerBroadcast,
+  getAdminMessageAudio,
+  uuidv4,
 } from "../stores/voiceMessageStore.js";
 
 const router = Router();
@@ -80,8 +89,158 @@ router.delete("/users/:deviceId", authMiddleware("admin"), (req, res) => {
   res.json({ ok: true });
 });
 
+router.get("/rooms", authMiddleware("admin"), (_req, res) => {
+  res.json({ rooms: listRooms() });
+});
+
+router.post("/rooms", authMiddleware("admin"), (req, res) => {
+  const { room_code: roomCode, title } = req.body || {};
+
+  if (!roomCode || typeof roomCode !== "string") {
+    return res.status(400).json({
+      error: "invalid_request",
+      message: "room_code je obavezan.",
+    });
+  }
+
+  const result = createRoom({ roomCode, title });
+
+  if (result.error === "invalid_format") {
+    return res.status(400).json({
+      error: result.error,
+      message: "Ključ sobe mora imati 2–32 znaka (slova, brojke, - ili _).",
+    });
+  }
+
+  if (result.error === "already_exists") {
+    return res.status(409).json({
+      error: result.error,
+      message: "Soba s tim ključem već postoji.",
+    });
+  }
+
+  res.status(201).json({ room: result.room });
+});
+
+router.patch("/rooms/:roomCode", authMiddleware("admin"), (req, res) => {
+  const { is_active: isActive } = req.body || {};
+
+  if (typeof isActive !== "boolean") {
+    return res.status(400).json({
+      error: "invalid_request",
+      message: "is_active mora biti boolean.",
+    });
+  }
+
+  const room = setRoomActive(req.params.roomCode, isActive);
+  if (!room) {
+    return res.status(404).json({ error: "not_found", message: "Soba nije pronađena." });
+  }
+
+  res.json({
+    room_code: room.room_code,
+    title: room.title,
+    is_active: Boolean(room.is_active),
+    created_at: room.created_at,
+  });
+});
+
+router.delete("/rooms/:roomCode", authMiddleware("admin"), (req, res) => {
+  const result = deleteRoom(req.params.roomCode);
+
+  if (result.error === "not_found") {
+    return res.status(404).json({ error: "not_found", message: "Soba nije pronađena." });
+  }
+
+  if (result.error === "not_empty") {
+    return res.status(409).json({
+      error: result.error,
+      message: `Soba ima ${result.member_count} korisnika. Prvo uklonite korisnike.`,
+    });
+  }
+
+  if (result.error === "invalid_format") {
+    return res.status(400).json({
+      error: result.error,
+      message: "Nevaljan ključ sobe.",
+    });
+  }
+
+  res.json({ ok: true });
+});
+
 router.get("/messages", authMiddleware("admin"), (_req, res) => {
   res.json({ messages: listCompletedMessages() });
+});
+
+router.post("/messages/broadcast", authMiddleware("admin"), (req, res) => {
+  const { room_code: roomCode, sender_name: senderName, wav_base64: wavBase64 } = req.body || {};
+
+  const normalizedRoom = normalizeRoomCode(roomCode);
+  if (!normalizedRoom) {
+    return res.status(400).json({
+      error: "invalid_request",
+      message: "room_code je obavezan i mora biti valjan.",
+    });
+  }
+
+  if (!getRoom(normalizedRoom)) {
+    return res.status(404).json({
+      error: "not_found",
+      message: "Soba ne postoji.",
+    });
+  }
+
+  if (!wavBase64 || typeof wavBase64 !== "string") {
+    return res.status(400).json({
+      error: "invalid_request",
+      message: "wav_base64 je obavezan.",
+    });
+  }
+
+  let wavBuffer;
+  try {
+    wavBuffer = Buffer.from(wavBase64, "base64");
+  } catch {
+    return res.status(400).json({
+      error: "invalid_request",
+      message: "wav_base64 nije valjan.",
+    });
+  }
+
+  if (wavBuffer.length < 48) {
+    return res.status(400).json({
+      error: "invalid_request",
+      message: "Snimka je prazna.",
+    });
+  }
+
+  const sessionId = uuidv4();
+  const message = createServerBroadcast({
+    sessionId,
+    roomCode: normalizedRoom,
+    senderName:
+      (typeof senderName === "string" && senderName.trim()) || "Centrala",
+    wavBuffer,
+  });
+
+  res.status(201).json({
+    session_id: message.session_id,
+    source_type: message.source_type,
+    room_code: message.room_code,
+    sender_name: message.sender_name,
+  });
+});
+
+router.get("/messages/:sessionId/audio", authMiddleware("admin"), (req, res) => {
+  const audio = getAdminMessageAudio(req.params.sessionId);
+  if (!audio) {
+    return res.status(404).json({ error: "not_found", message: "Audio nije dostupan." });
+  }
+
+  res.setHeader("Content-Type", "audio/wav");
+  res.setHeader("Cache-Control", "no-store");
+  res.send(audio);
 });
 
 router.get("/messages/:sessionId", authMiddleware("admin"), (req, res) => {
@@ -94,12 +253,15 @@ router.get("/messages/:sessionId", authMiddleware("admin"), (req, res) => {
     session_id: message.session_id,
     sender_device_id: message.sender_device_id,
     sender_name: message.sender_name,
+    source_type: message.source_type || "radio",
+    room_code: message.room_code || null,
     chunk_count: message.chunk_count,
     sequence: message.sequence,
     created_at: message.created_at,
     completed_at: message.completed_at,
     base_feedback: message.base_feedback,
     person_feedback: message.person_feedback,
+    has_audio: Boolean(message.wav_data) || message.chunk_count > 0,
   });
 });
 

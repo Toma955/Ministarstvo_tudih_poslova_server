@@ -6,22 +6,25 @@
   <title>Admin — Ministarstvo tuđih poslova</title>
   <style>
     :root {
-      --bg: #0f1410;
-      --panel: #1a231c;
-      --border: #2d3b30;
-      --text: #e8efe9;
-      --muted: #9aab9d;
-      --accent: #3d7a52;
-      --accent-hover: #4a9463;
-      --danger: #b54a4a;
-      --warning: #c9a227;
-      --ok: #5a9e6f;
+      --bg-top: #0836c1;
+      --bg-bottom: #03164e;
+      --panel: rgba(6, 42, 150, 0.72);
+      --panel-solid: #062a96;
+      --border: rgba(255, 255, 255, 0.16);
+      --text: #f4f7ff;
+      --muted: rgba(244, 247, 255, 0.68);
+      --accent: #34d366;
+      --accent-hover: #52e07a;
+      --danger: #ef4444;
+      --warning: #fbbf24;
+      --ok: #34d366;
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      font-family: "Times New Roman", Georgia, serif;
-      background: var(--bg);
+      font-family: "Times New Roman", Times, Georgia, serif;
+      background: linear-gradient(180deg, var(--bg-top) 0%, var(--bg-bottom) 100%);
+      background-attachment: fixed;
       color: var(--text);
       min-height: 100vh;
     }
@@ -39,9 +42,9 @@
     label { display: block; margin-bottom: 6px; color: var(--muted); font-size: 0.85rem; }
     input, textarea, select, button {
       font: inherit;
-      border-radius: 8px;
+      border-radius: 10px;
       border: 1px solid var(--border);
-      background: #111711;
+      background: rgba(2, 14, 62, 0.55);
       color: var(--text);
       padding: 10px 12px;
       width: 100%;
@@ -63,9 +66,9 @@
     @media (max-width: 640px) { .row { grid-template-columns: 1fr; } }
     .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
     .stat {
-      background: #111711;
+      background: rgba(2, 14, 62, 0.45);
       border: 1px solid var(--border);
-      border-radius: 8px;
+      border-radius: 10px;
       padding: 14px;
       text-align: center;
     }
@@ -79,10 +82,21 @@
       padding: 2px 8px;
       border-radius: 999px;
       font-size: 0.75rem;
-      background: #243028;
+      background: rgba(255, 255, 255, 0.1);
     }
-    .badge.on { background: #1f3d2a; color: #8fd4a5; }
-    .badge.off { background: #3d2020; color: #e89898; }
+    .badge.on { background: rgba(52, 211, 102, 0.22); color: #9ef0b8; }
+    .badge.off { background: rgba(239, 68, 68, 0.22); color: #fecaca; }
+    .room-key {
+      font-family: "Times New Roman", Times, Georgia, serif;
+      font-size: 1rem;
+      letter-spacing: 0.04em;
+      color: #9ef0b8;
+    }
+    .origin-base { color: #bfdbfe; }
+    .origin-radio { color: #fde68a; }
+    .origin-server { color: #9ef0b8; }
+    .record-status { color: var(--muted); font-size: 0.85rem; margin-top: 8px; }
+    .record-status.recording { color: #fca5a5; }
     .hidden { display: none !important; }
     .topbar {
       display: flex;
@@ -127,6 +141,47 @@
         <div class="stat"><div class="num" id="statUsers">0</div><div class="lbl">Korisnici</div></div>
         <div class="stat"><div class="num" id="statMessages">0</div><div class="lbl">Poruke u RAM-u</div></div>
         <div class="stat"><div class="num" id="statStatus">—</div><div class="lbl">App status</div></div>
+      </div>
+
+      <div class="card">
+        <h2>Glasovne poruke (zadnjih 10)</h2>
+        <p style="color:var(--muted);margin-top:0;font-size:0.9rem">
+          Tipovi: <span class="origin-base">base</span> (desktop baza), <span class="origin-radio">radio</span> (mobitel), <span class="origin-server">server</span> (centrala).
+        </p>
+
+        <div class="row" style="margin-top:12px">
+          <div>
+            <label for="broadcastRoom">Soba</label>
+            <select id="broadcastRoom"></select>
+          </div>
+          <div>
+            <label for="broadcastSender">Pošiljatelj</label>
+            <input id="broadcastSender" value="Centrala" placeholder="Centrala">
+          </div>
+        </div>
+
+        <div class="actions" style="margin-top:12px">
+          <button id="recordBroadcastBtn" type="button">Snimi poruku</button>
+          <button class="secondary" id="stopRecordBtn" type="button" disabled>Stop</button>
+          <button id="sendBroadcastBtn" type="button" disabled>Pošalji u sobu</button>
+        </div>
+        <p id="recordStatus" class="record-status">Snimite kratku poruku pa pošaljite.</p>
+        <p id="broadcastMsg" class="success hidden"></p>
+
+        <div style="overflow-x:auto;margin-top:18px">
+          <table>
+            <thead>
+              <tr>
+                <th>Tip</th>
+                <th>Pošiljatelj</th>
+                <th>Soba</th>
+                <th>Vrijeme</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="messagesBody"></tbody>
+          </table>
+        </div>
       </div>
 
       <div class="card">
@@ -198,6 +253,42 @@
       </div>
 
       <div class="card">
+        <h2>Sobe (ključevi za korisnike)</h2>
+        <p style="color:var(--muted);margin-top:0;font-size:0.9rem">
+          Kreirajte sobu ovdje. Korisnici u appu moraju unijeti točan ključ sobe — sami je ne mogu izmisliti.
+        </p>
+        <div class="row">
+          <div>
+            <label for="newRoomCode">Ključ sobe</label>
+            <input id="newRoomCode" placeholder="npr. sektor-7" autocomplete="off">
+          </div>
+          <div>
+            <label for="newRoomTitle">Naziv (opcionalno)</label>
+            <input id="newRoomTitle" placeholder="Sektor 7">
+          </div>
+        </div>
+        <div class="actions" style="margin-top:12px">
+          <button id="createRoomBtn" type="button">Kreiraj sobu</button>
+        </div>
+        <p id="roomCreateMsg" class="success hidden"></p>
+        <div style="overflow-x:auto;margin-top:16px">
+          <table>
+            <thead>
+              <tr>
+                <th>Ključ</th>
+                <th>Naziv</th>
+                <th>Korisnici</th>
+                <th>Status</th>
+                <th>Kreirano</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="roomsBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
         <h2>Korisnici</h2>
         <button class="secondary" id="refreshUsersBtn" type="button" style="margin-bottom:12px">Osvježi</button>
         <div style="overflow-x:auto">
@@ -248,12 +339,14 @@
     }
 
     async function loadDashboard() {
-      const [me, stats, operating, system, users] = await Promise.all([
+      const [me, stats, operating, system, users, rooms, messages] = await Promise.all([
         api("/admin/me"),
         api("/admin/stats"),
         api("/admin/settings/operating-status"),
         api("/admin/settings/system-message"),
         api("/admin/users"),
+        api("/admin/rooms"),
+        api("/admin/messages"),
       ]);
 
       document.getElementById("adminName").textContent = me.username;
@@ -272,6 +365,266 @@
       document.getElementById("sysMessage").value = system.message || "";
 
       renderUsers(users.users || []);
+      renderRooms(rooms.rooms || []);
+      populateBroadcastRooms(rooms.rooms || []);
+      renderMessages(messages.messages || []);
+    }
+
+    function originLabel(type) {
+      if (type === "base") return "base";
+      if (type === "server") return "server";
+      return "radio";
+    }
+
+    function originClass(type) {
+      if (type === "base") return "origin-base";
+      if (type === "server") return "origin-server";
+      return "origin-radio";
+    }
+
+    function renderMessages(messages) {
+      const body = document.getElementById("messagesBody");
+      if (!messages.length) {
+        body.innerHTML = "<tr><td colspan='5' style='color:var(--muted)'>Nema poruka u memoriji.</td></tr>";
+        return;
+      }
+
+      body.innerHTML = messages.map((m) => `
+        <tr>
+          <td><span class="${originClass(m.source_type)}">${escapeHtml(originLabel(m.source_type))}</span></td>
+          <td>${escapeHtml(m.sender_name || "—")}</td>
+          <td><code>${escapeHtml(m.room_code || "—")}</code></td>
+          <td>${escapeHtml((m.completed_at || m.created_at || "").replace("T", " ").slice(0, 16))}</td>
+          <td class="actions">
+            ${m.has_audio ? `<button class="secondary" data-play="${escapeHtml(m.session_id)}" type="button">▶ Slušaj</button>` : `<span style="color:var(--muted);font-size:0.8rem">E2E</span>`}
+            <button class="danger" data-delete-msg="${escapeHtml(m.session_id)}" type="button">Obriši</button>
+          </td>
+        </tr>
+      `).join("");
+
+      body.querySelectorAll("[data-play]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const id = btn.getAttribute("data-play");
+          const token = localStorage.getItem(TOKEN_KEY);
+          const res = await fetch("/admin/messages/" + encodeURIComponent(id) + "/audio", {
+            headers: token ? { Authorization: "Bearer " + token } : {},
+          });
+          if (!res.ok) {
+            alert("Audio nije dostupan.");
+            return;
+          }
+          const blob = await res.blob();
+          const url = URL.createObjectURL(blob);
+          const audio = new Audio(url);
+          audio.play();
+        });
+      });
+
+      body.querySelectorAll("[data-delete-msg]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const id = btn.getAttribute("data-delete-msg");
+          if (!confirm("Obrisati poruku?")) return;
+          await api("/admin/messages/" + encodeURIComponent(id), { method: "DELETE" });
+          loadDashboard();
+        });
+      });
+    }
+
+    function populateBroadcastRooms(rooms) {
+      const select = document.getElementById("broadcastRoom");
+      const active = rooms.filter((r) => r.is_active);
+      if (!active.length) {
+        select.innerHTML = "<option value=''>— nema aktivnih soba —</option>";
+        return;
+      }
+      select.innerHTML = active.map((r) =>
+        `<option value="${escapeHtml(r.room_code)}">${escapeHtml(r.room_code)}${r.title ? " — " + escapeHtml(r.title) : ""}</option>`
+      ).join("");
+    }
+
+    let mediaRecorder = null;
+    let recordedChunks = [];
+    let recordedBlob = null;
+
+    function setRecordStatus(text, recording = false) {
+      const el = document.getElementById("recordStatus");
+      el.textContent = text;
+      el.classList.toggle("recording", recording);
+    }
+
+    document.getElementById("recordBroadcastBtn").addEventListener("click", async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        recordedChunks = [];
+        recordedBlob = null;
+        document.getElementById("sendBroadcastBtn").disabled = true;
+
+        mediaRecorder = new MediaRecorder(stream);
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data.size > 0) recordedChunks.push(e.data);
+        };
+        mediaRecorder.onstop = () => {
+          stream.getTracks().forEach((t) => t.stop());
+          recordedBlob = new Blob(recordedChunks, { type: "audio/webm" });
+          document.getElementById("sendBroadcastBtn").disabled = false;
+          setRecordStatus("Snimka spremna — pošaljite u sobu.");
+        };
+
+        mediaRecorder.start();
+        document.getElementById("recordBroadcastBtn").disabled = true;
+        document.getElementById("stopRecordBtn").disabled = false;
+        setRecordStatus("Snimanje…", true);
+      } catch (e) {
+        setRecordStatus("Mikrofon nije dostupan.");
+      }
+    });
+
+    document.getElementById("stopRecordBtn").addEventListener("click", () => {
+      if (mediaRecorder && mediaRecorder.state !== "inactive") {
+        mediaRecorder.stop();
+      }
+      document.getElementById("recordBroadcastBtn").disabled = false;
+      document.getElementById("stopRecordBtn").disabled = true;
+      setRecordStatus("Obrada snimke…");
+    });
+
+    document.getElementById("sendBroadcastBtn").addEventListener("click", async () => {
+      const msg = document.getElementById("broadcastMsg");
+      msg.classList.add("hidden");
+      const roomCode = document.getElementById("broadcastRoom").value;
+      if (!roomCode) {
+        alert("Odaberite sobu.");
+        return;
+      }
+      if (!recordedBlob) {
+        alert("Prvo snimite poruku.");
+        return;
+      }
+
+      setRecordStatus("Priprema i slanje…");
+      try {
+        const wavBase64 = await blobToWavBase64(recordedBlob);
+        const data = await api("/admin/messages/broadcast", {
+          method: "POST",
+          body: JSON.stringify({
+            room_code: roomCode,
+            sender_name: document.getElementById("broadcastSender").value.trim() || "Centrala",
+            wav_base64: wavBase64,
+          }),
+        });
+        msg.textContent = "Poruka poslana u sobu " + data.room_code + " (server).";
+        msg.className = "success";
+        msg.classList.remove("hidden");
+        recordedBlob = null;
+        document.getElementById("sendBroadcastBtn").disabled = true;
+        setRecordStatus("Poruka poslana.");
+        loadDashboard();
+      } catch (e) {
+        msg.textContent = e.message;
+        msg.className = "error";
+        msg.classList.remove("hidden");
+        setRecordStatus("Slanje nije uspjelo.");
+      }
+    });
+
+    async function blobToWavBase64(blob) {
+      const arrayBuffer = await blob.arrayBuffer();
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+      const wavBuffer = audioBufferToWav(audioBuffer);
+      const bytes = new Uint8Array(wavBuffer);
+      let binary = "";
+      for (let i = 0; i < bytes.length; i += 1) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      return btoa(binary);
+    }
+
+    function audioBufferToWav(buffer) {
+      const channel = buffer.getChannelData(0);
+      const sampleRate = buffer.sampleRate;
+      const numSamples = channel.length;
+      const bytesPerSample = 2;
+      const blockAlign = bytesPerSample;
+      const byteRate = sampleRate * blockAlign;
+      const dataSize = numSamples * bytesPerSample;
+      const arrayBuffer = new ArrayBuffer(44 + dataSize);
+      const view = new DataView(arrayBuffer);
+
+      function writeString(offset, text) {
+        for (let i = 0; i < text.length; i += 1) {
+          view.setUint8(offset + i, text.charCodeAt(i));
+        }
+      }
+
+      writeString(0, "RIFF");
+      view.setUint32(4, 36 + dataSize, true);
+      writeString(8, "WAVE");
+      writeString(12, "fmt ");
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true);
+      view.setUint16(22, 1, true);
+      view.setUint32(24, sampleRate, true);
+      view.setUint32(28, byteRate, true);
+      view.setUint16(32, blockAlign, true);
+      view.setUint16(34, 16, true);
+      writeString(36, "data");
+      view.setUint32(40, dataSize, true);
+
+      let offset = 44;
+      for (let i = 0; i < numSamples; i += 1) {
+        const sample = Math.max(-1, Math.min(1, channel[i]));
+        view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+        offset += 2;
+      }
+
+      return arrayBuffer;
+    }
+
+    function renderRooms(rooms) {
+      const body = document.getElementById("roomsBody");
+      if (!rooms.length) {
+        body.innerHTML = "<tr><td colspan='6' style='color:var(--muted)'>Nema kreiranih soba. Kreirajte prvu iznad.</td></tr>";
+        return;
+      }
+      body.innerHTML = rooms.map((room) => `
+        <tr>
+          <td><span class="room-key">${escapeHtml(room.room_code)}</span></td>
+          <td>${escapeHtml(room.title || "—")}</td>
+          <td>${room.member_count}</td>
+          <td><span class="badge ${room.is_active ? "on" : "off"}">${room.is_active ? "Aktivna" : "Isključena"}</span></td>
+          <td>${escapeHtml((room.created_at || "").replace("T", " ").slice(0, 16))}</td>
+          <td class="actions">
+            <button class="secondary" data-toggle-room="${escapeHtml(room.room_code)}" data-active="${room.is_active ? "0" : "1"}" type="button">${room.is_active ? "Isključi" : "Uključi"}</button>
+            <button class="danger" data-delete-room="${escapeHtml(room.room_code)}" type="button">Obriši</button>
+          </td>
+        </tr>
+      `).join("");
+
+      body.querySelectorAll("[data-toggle-room]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const code = btn.getAttribute("data-toggle-room");
+          const isActive = btn.getAttribute("data-active") === "1";
+          await api("/admin/rooms/" + encodeURIComponent(code), {
+            method: "PATCH",
+            body: JSON.stringify({ is_active: isActive }),
+          });
+          loadDashboard();
+        });
+      });
+
+      body.querySelectorAll("[data-delete-room]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const code = btn.getAttribute("data-delete-room");
+          if (!confirm("Obrisati sobu " + code + "?")) return;
+          try {
+            await api("/admin/rooms/" + encodeURIComponent(code), { method: "DELETE" });
+            loadDashboard();
+          } catch (e) {
+            alert(e.message);
+          }
+        });
+      });
     }
 
     function renderUsers(users) {
@@ -412,6 +765,29 @@
     });
 
     document.getElementById("refreshUsersBtn").addEventListener("click", loadDashboard);
+
+    document.getElementById("createRoomBtn").addEventListener("click", async () => {
+      const msg = document.getElementById("roomCreateMsg");
+      msg.classList.add("hidden");
+      try {
+        const data = await api("/admin/rooms", {
+          method: "POST",
+          body: JSON.stringify({
+            room_code: document.getElementById("newRoomCode").value.trim(),
+            title: document.getElementById("newRoomTitle").value.trim(),
+          }),
+        });
+        document.getElementById("newRoomCode").value = "";
+        document.getElementById("newRoomTitle").value = "";
+        msg.textContent = "Soba kreirana: " + data.room.room_code;
+        msg.classList.remove("hidden");
+        loadDashboard();
+      } catch (e) {
+        msg.textContent = e.message;
+        msg.className = "error";
+        msg.classList.remove("hidden");
+      }
+    });
 
     if (localStorage.getItem(TOKEN_KEY)) {
       api("/admin/me").then(showDashboard).catch(showLogin);

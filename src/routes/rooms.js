@@ -5,6 +5,21 @@ import { joinRoom, getUser, normalizeRoomCode } from "../db/database.js";
 
 const router = Router();
 
+const joinErrors = {
+  invalid_format: {
+    status: 400,
+    message: "Ključ sobe mora imati 2–32 znaka (slova, brojke, - ili _).",
+  },
+  not_found: {
+    status: 404,
+    message: "Soba ne postoji. Provjerite ključ s administracije.",
+  },
+  inactive: {
+    status: 403,
+    message: "Soba je deaktivirana. Obratite se administraciji.",
+  },
+};
+
 router.post("/join", (req, res) => {
   const {
     room_code: roomCode,
@@ -17,13 +32,6 @@ router.post("/join", (req, res) => {
     return res.status(400).json({ error: "invalid_request", message: "device_id je obavezan." });
   }
 
-  if (!normalizeRoomCode(roomCode)) {
-    return res.status(400).json({
-      error: "invalid_request",
-      message: "Soba mora imati 2–32 znaka (slova, brojke, - ili _).",
-    });
-  }
-
   if (!publicKeyBase64) {
     return res.status(400).json({
       error: "invalid_request",
@@ -31,17 +39,25 @@ router.post("/join", (req, res) => {
     });
   }
 
-  const user = joinRoom({
+  const result = joinRoom({
     deviceId,
     roomCode,
     publicKeyBase64,
     displayName,
   });
 
-  if (!user) {
-    return res.status(400).json({ error: "invalid_request", message: "Ulaz u sobu nije uspio." });
+  if (result.error) {
+    const mapped = joinErrors[result.error] || {
+      status: 400,
+      message: "Ulaz u sobu nije uspio.",
+    };
+    return res.status(mapped.status).json({
+      error: result.error,
+      message: mapped.message,
+    });
   }
 
+  const user = result.user;
   const token = signToken({
     role: "user",
     device_id: deviceId,

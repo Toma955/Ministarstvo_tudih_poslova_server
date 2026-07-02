@@ -44,11 +44,15 @@ router.post("/", authMiddleware(), (req, res) => {
     user?.display_name ||
     "Nepoznato";
 
+  const sourceType = user?.is_base_station ? "base" : "radio";
+
   const sessionId = uuidv4();
   createVoiceSession({
     sessionId,
     senderDeviceId: deviceId,
     senderName,
+    sourceType,
+    roomCode: user?.room_code || null,
   });
 
   res.status(201).json({ session_id: sessionId });
@@ -176,7 +180,10 @@ router.get("/:sessionId/delivery", authMiddleware(), (req, res) => {
   const sender = getUser(payload.sender_device_id);
   res.json({
     ...payload,
-    sender_public_key_base64: sender?.public_key_base64 || null,
+    sender_public_key_base64:
+      payload.is_plaintext || payload.source_type === "server"
+        ? null
+        : sender?.public_key_base64 || null,
   });
 });
 

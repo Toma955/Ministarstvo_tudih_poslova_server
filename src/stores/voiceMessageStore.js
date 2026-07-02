@@ -1,7 +1,11 @@
+import { v4 as uuidv4 } from "uuid";
 import { config } from "../config.js";
+import { getUser } from "../db/database.js";
 
-/** @typedef {{ version: number, ciphertext: Buffer }} EncryptedChunk */
-/** @typedef {{ version: number, ciphertext_base64: string }} KeyOfferPayload */
+/** @typedef {{ version: number, ciphertext: Buffer, plaintext?: boolean }} EncryptedChunk */
+
+export const SERVER_SENDER_ID = "__server__";
+export const SOURCE_TYPES = new Set(["base", "radio", "server"]);
 
 const activeSessions = new Map();
 const completedMessages = [];
@@ -18,28 +22,109 @@ function normalizeFeedbackKind(kind) {
   return map[kind] || kind;
 }
 
-function serializeChunks(chunksMap) {
+function normalizeSourceType(value, fallback = "radio") {
+  if (typeof value === "string" && SOURCE_TYPES.has(value)) {
+    return value;
+  }
+  return fallback;
+}
+
+function pcmFromWavBuffer(wavBuffer) {
+  if (!wavBuffer || wavBuffer.length <= 44) return Buffer.alloc(0);
+  if (wavBuffer.toString("ascii", 0, 4) !== "RIFF") {
+    return wavBuffer;
+  }
+  return wavBuffer.subarray(44);
+}
+
+function serializeChunks(chunksMap, plaintext = false) {
   return [...chunksMap.entries()]
     .sort(([a], [b]) => a - b)
     .map(([sequence, chunk]) => ({
       sequence,
-      encryption_version: chunk.version,
+      encryption_version: chunk.version ?? 0,
       ciphertext_base64: chunk.ciphertext.toString("base64"),
+      is_plaintext: plaintext || Boolean(chunk.plaintext),
     }));
 }
 
-export function createVoiceSession({ sessionId, senderDeviceId, senderName }) {
+function trimCompletedMessages() {
+  while (completedMessages.length > config.maxVoiceMessages) {
+    completedMessages.pop();
+  }
+}
+
+function inboxItemFromMessage(message, isComplete) {
+  return {
+    session_id: message.session_id,
+    sender_device_id: message.sender_device_id,
+    sender_name: message.sender_name,
+    source_type: message.source_type || "radio",
+    room_code: message.room_code || null,
+    chunk_count: message.chunk_count ?? message.chunks?.size ?? 0,
+    sequence: message.sequence,
+    created_at: message.created_at,
+    completed_at: message.completed_at || null,
+    is_complete: isComplete,
+  };
+}
+
+export function createVoiceSession({
+  sessionId,
+  senderDeviceId,
+  senderName,
+  sourceType = "radio",
+  roomCode = null,
+}) {
   activeSessions.set(sessionId, {
     session_id: sessionId,
     sender_device_id: senderDeviceId,
     sender_name: senderName,
+    source_type: normalizeSourceType(sourceType),
+    room_code: roomCode || null,
     sequence: 0,
     chunks: new Map(),
     key_offers: new Map(),
     created_at: new Date().toISOString(),
     completed: false,
+    plaintext: false,
   });
   return activeSessions.get(sessionId);
+}
+
+export function createServerBroadcast({ sessionId, roomCode, senderName, wavBuffer }) {
+  const pcm = pcmFromWavBuffer(wavBuffer);
+  const chunks = new Map();
+
+  if (pcm.length > 0) {
+    chunks.set(0, {
+      version: 0,
+      ciphertext: pcm,
+      plaintext: true,
+    });
+  }
+
+  const message = {
+    session_id: sessionId,
+    sender_device_id: SERVER_SENDER_ID,
+    sender_name: senderName || "Centrala",
+    source_type: "server",
+    room_code: roomCode,
+    sequence: 0,
+    chunks,
+    key_offers: new Map(),
+    chunk_count: chunks.size,
+    created_at: new Date().toISOString(),
+    completed_at: new Date().toISOString(),
+    base_feedback: null,
+    person_feedback: [],
+    plaintext: true,
+    wav_data: wavBuffer,
+  };
+
+  completedMessages.unshift(message);
+  trimCompletedMessages();
+  return message;
 }
 
 export function getActiveSession(sessionId) {
@@ -52,7 +137,7 @@ export function getMessageRecord(sessionId) {
 
 export function addKeyOffer(sessionId, recipientDeviceId, encryptionVersion, ciphertextBase64) {
   const session = getActiveSession(sessionId);
-  if (!session) return null;
+  if (!session || session.plaintext) return null;
 
   if (!session.key_offers) {
     session.key_offers = new Map();
@@ -69,7 +154,7 @@ export function addKeyOffer(sessionId, recipientDeviceId, encryptionVersion, cip
 export function addEncryptedChunk(sessionId, sequence, encryptionVersion, ciphertextBase64) {
   const session = activeSessions.get(sessionId);
   if (!session) return null;
-  if (session.completed) return null;
+  if (session.completed || session.plaintext) return null;
 
   const ciphertext = Buffer.from(ciphertextBase64, "base64");
   session.chunks.set(sequence, {
@@ -93,6 +178,8 @@ export function completeVoiceSession(sessionId, senderName, sequence) {
     session_id: sessionId,
     sender_device_id: session.sender_device_id,
     sender_name: session.sender_name,
+    source_type: session.source_type || "radio",
+    room_code: session.room_code || null,
     sequence: session.sequence,
     chunks: session.chunks,
     key_offers: session.key_offers || new Map(),
@@ -101,14 +188,13 @@ export function completeVoiceSession(sessionId, senderName, sequence) {
     completed_at: session.completed_at,
     base_feedback: null,
     person_feedback: [],
+    plaintext: Boolean(session.plaintext),
+    wav_data: null,
   };
 
   activeSessions.delete(sessionId);
   completedMessages.unshift(message);
-
-  while (completedMessages.length > config.maxVoiceMessages) {
-    completedMessages.pop();
-  }
+  trimCompletedMessages();
 
   return message;
 }
@@ -117,39 +203,41 @@ export function getCompletedMessage(sessionId) {
   return completedMessages.find((m) => m.session_id === sessionId) || null;
 }
 
+export function getAdminMessageAudio(sessionId) {
+  const message = getCompletedMessage(sessionId);
+  if (!message?.wav_data) return null;
+  return message.wav_data;
+}
+
 export function listInboxForDevice(deviceId) {
+  const user = getUser(deviceId);
+  const userRoom = user?.room_code || null;
   const items = [];
 
   for (const session of activeSessions.values()) {
     if (session.sender_device_id === deviceId) continue;
-    if (!session.key_offers?.has(deviceId)) continue;
 
-    items.push({
-      session_id: session.session_id,
-      sender_device_id: session.sender_device_id,
-      sender_name: session.sender_name,
-      chunk_count: session.chunks.size,
-      sequence: session.sequence,
-      created_at: session.created_at,
-      completed_at: null,
-      is_complete: false,
-    });
+    if (session.source_type === "server") {
+      if (!userRoom || session.room_code !== userRoom) continue;
+      items.push(inboxItemFromMessage(session, false));
+      continue;
+    }
+
+    if (!session.key_offers?.has(deviceId)) continue;
+    items.push(inboxItemFromMessage(session, false));
   }
 
   for (const message of completedMessages) {
     if (message.sender_device_id === deviceId) continue;
-    if (!message.key_offers?.has(deviceId)) continue;
 
-    items.push({
-      session_id: message.session_id,
-      sender_device_id: message.sender_device_id,
-      sender_name: message.sender_name,
-      chunk_count: message.chunk_count,
-      sequence: message.sequence,
-      created_at: message.created_at,
-      completed_at: message.completed_at,
-      is_complete: true,
-    });
+    if (message.source_type === "server") {
+      if (!userRoom || message.room_code !== userRoom) continue;
+      items.push(inboxItemFromMessage(message, true));
+      continue;
+    }
+
+    if (!message.key_offers?.has(deviceId)) continue;
+    items.push(inboxItemFromMessage(message, true));
   }
 
   return items.sort((a, b) => {
@@ -164,6 +252,23 @@ export function getDeliveryPackage(sessionId, recipientDeviceId) {
   if (!message) return null;
   if (message.sender_device_id === recipientDeviceId) return null;
 
+  if (message.source_type === "server" || message.plaintext) {
+    const user = getUser(recipientDeviceId);
+    if (!user?.room_code || message.room_code !== user.room_code) return null;
+
+    return {
+      session_id: sessionId,
+      sender_device_id: message.sender_device_id,
+      sender_name: message.sender_name,
+      source_type: "server",
+      sequence: message.sequence,
+      is_complete: Boolean(message.completed_at),
+      is_plaintext: true,
+      wrapped_key: null,
+      chunks: serializeChunks(message.chunks, true),
+    };
+  }
+
   const keyOffer = message.key_offers?.get(recipientDeviceId);
   if (!keyOffer) return null;
 
@@ -171,8 +276,10 @@ export function getDeliveryPackage(sessionId, recipientDeviceId) {
     session_id: sessionId,
     sender_device_id: message.sender_device_id,
     sender_name: message.sender_name,
+    source_type: message.source_type || "radio",
     sequence: message.sequence,
     is_complete: Boolean(message.completed_at),
+    is_plaintext: false,
     wrapped_key: {
       encryption_version: keyOffer.version,
       ciphertext_base64: keyOffer.ciphertext_base64,
@@ -186,6 +293,8 @@ export function listCompletedMessages() {
     session_id: message.session_id,
     sender_device_id: message.sender_device_id,
     sender_name: message.sender_name,
+    source_type: message.source_type || "radio",
+    room_code: message.room_code || null,
     chunk_count: message.chunk_count,
     sequence: message.sequence,
     created_at: message.created_at,
@@ -193,6 +302,7 @@ export function listCompletedMessages() {
     key_offer_count: message.key_offers?.size || 0,
     person_feedback_count: message.person_feedback.length,
     has_base_feedback: Boolean(message.base_feedback),
+    has_audio: Boolean(message.wav_data),
   }));
 }
 
@@ -311,3 +421,5 @@ export function memoryStats() {
     max_voice_messages: config.maxVoiceMessages,
   };
 }
+
+export { uuidv4 };

@@ -1,13 +1,17 @@
 services:
   - type: web
     name: mk-komunikacija-server
-    env: node
+    runtime: node
     plan: free
+    region: frankfurt
+    branch: main
     buildCommand: npm install
     startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
     envVars:
       - key: NODE_VERSION
-        value: 20
+        value: "20"
       - key: JWT_SECRET
         generateValue: true
       - key: ADMIN_USERNAME
@@ -15,4 +19,8 @@ services:
       - key: ADMIN_PASSWORD
         sync: false
       - key: MAX_VOICE_MESSAGES
-        value: 10
+        value: "10"
+      - key: DATABASE_PATH
+        value: /var/data/mk-server.db
+      - key: CORS_ORIGIN
+        value: "*"

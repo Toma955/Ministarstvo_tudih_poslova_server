@@ -13,10 +13,12 @@ import userRoutes from "./routes/users.js";
 import roomRoutes from "./routes/rooms.js";
 import messageRoutes from "./routes/messages.js";
 import deviceRoutes from "./routes/devices.js";
+import realtimeRoutes from "./routes/realtime.js";
 import publicRoutes from "./routes/public.js";
 import adminRoutes from "./routes/admin.js";
 import { memoryStats, purgeStaleActiveSessions } from "./stores/voiceMessageStore.js";
 import { isApnsConfigured } from "./services/apns.js";
+import { realtimeStats } from "./services/realtime.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const adminPanelPath = path.join(__dirname, "../public/admin/index.html");
@@ -39,6 +41,7 @@ app.get("/health", (_req, res) => {
     service: "ministarstvo-komunikacija-server",
     api_version: config.apiVersion,
     memory: memoryStats(),
+    realtime: realtimeStats(),
     default_room: config.defaultRoomCode,
     apns_configured: isApnsConfigured(),
   });
@@ -55,6 +58,7 @@ app.use("/api/v1/profile", profileRoutes);
 app.use("/api/v1/users", userRoutes);
 app.use("/api/v1/messages", messageRoutes);
 app.use("/api/v1/devices", deviceRoutes);
+app.use("/api/v1/realtime", realtimeRoutes);
 app.use("/api/v1", publicRoutes);
 app.use("/admin", adminRoutes);
 

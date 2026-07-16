@@ -9,13 +9,20 @@ import {
   addEncryptedChunk,
   addKeyOffer,
   completeVoiceSession,
+  replaceFinalAudio,
   applyFeedback,
   feedbackState,
   listInboxForDevice,
   getDeliveryPackage,
   getMessageRecord,
 } from "../stores/voiceMessageStore.js";
-import { notifyVoiceMessageRecipients } from "../services/notifications.js";
+import { notifyVoiceMessageRecipients, notifyVoiceStarted } from "../services/notifications.js";
+import {
+  broadcastVoiceStarted,
+  broadcastVoiceChunk,
+  broadcastVoiceComplete,
+  broadcastVoiceFinal,
+} from "../services/realtime.js";
 
 const router = Router();
 
@@ -67,12 +74,18 @@ router.post("/", authMiddleware(), (req, res) => {
   const sourceType = user?.is_base_station ? "base" : "radio";
 
   const sessionId = uuidv4();
-  createVoiceSession({
+  const session = createVoiceSession({
     sessionId,
     senderDeviceId: deviceId,
     senderName,
     sourceType,
     roomCode: user?.room_code || null,
+  });
+
+  // Obavijesti sobu da streaming počinje — klijenti zaključaju snimanje.
+  broadcastVoiceStarted(session);
+  notifyVoiceStarted(session).catch((error) => {
+    console.warn("[push] voice_started notify failed", error.message);
   });
 
   res.status(201).json({ session_id: sessionId });
@@ -191,6 +204,13 @@ router.post("/:sessionId/chunks", authMiddleware(), (req, res) => {
     });
   }
 
+  // Server šalje chunk uređajima — klijent ne pita.
+  broadcastVoiceChunk(chunk, {
+    sequence: parsedSequence,
+    encryption_version: encryptionVersion,
+    ciphertext_base64: ciphertextBase64,
+  });
+
   res.json({
     ok: true,
     chunk_count: chunk.chunks.size,
@@ -237,6 +257,8 @@ router.post("/:sessionId/complete", authMiddleware(), (req, res) => {
   const keyOfferCount = completed.key_offers?.size ?? 0;
   const chunkCount = completed.chunk_count ?? 0;
 
+  broadcastVoiceComplete(completed);
+
   notifyVoiceMessageRecipients(completed).catch((error) => {
     console.warn("[push] notify failed", error.message);
   });
@@ -251,6 +273,75 @@ router.post("/:sessionId/complete", authMiddleware(), (req, res) => {
         : keyOfferCount === 0
           ? "Poruka nema key offers — primatelji je neće moći dekriptirati."
           : null,
+  });
+});
+
+router.post("/:sessionId/final", authMiddleware(), (req, res) => {
+  const deviceId = requireUser(req, res);
+  if (!deviceId) return;
+
+  const { sessionId } = req.params;
+  const {
+    chunks,
+    sample_rate: sampleRate,
+    sequence,
+  } = req.body || {};
+
+  if (!Array.isArray(chunks) || chunks.length === 0) {
+    return res.status(400).json({
+      error: "invalid_request",
+      message: "chunks mora biti neprazan niz.",
+    });
+  }
+
+  const message = getCompletedMessage(sessionId);
+  if (!message) {
+    const active = getActiveSession(sessionId);
+    if (active) {
+      return res.status(409).json({
+        error: "conflict",
+        message: "Prvo završi sesiju (complete), zatim pošalji finalnu snimku.",
+      });
+    }
+    return res.status(404).json({ error: "not_found", message: "Sesija nije pronađena." });
+  }
+
+  if (message.sender_device_id !== deviceId) {
+    return res.status(403).json({ error: "forbidden", message: "Sesija pripada drugom korisniku." });
+  }
+
+  const parsedSampleRate =
+    typeof sampleRate === "number" && Number.isFinite(sampleRate) ? sampleRate : null;
+
+  const updated = replaceFinalAudio(sessionId, chunks, parsedSampleRate);
+  if (!updated) {
+    return res.status(400).json({
+      error: "invalid_request",
+      message: "Finalna snimka nije prihvaćena.",
+    });
+  }
+
+  const parsedSequence = parseSequence(sequence);
+  if (parsedSequence !== null) {
+    updated.sequence = Math.max(updated.sequence ?? 0, parsedSequence);
+  }
+
+  const finalChunks = [...updated.chunks.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([seq, chunk]) => ({
+      sequence: seq,
+      encryption_version: chunk.version ?? 1,
+      ciphertext: chunk.ciphertext,
+    }));
+
+  broadcastVoiceFinal(updated, finalChunks);
+
+  res.json({
+    ok: true,
+    chunk_count: updated.chunk_count,
+    has_final_audio: true,
+    sample_rate: updated.sample_rate,
+    audio_quality: "final",
   });
 });
 

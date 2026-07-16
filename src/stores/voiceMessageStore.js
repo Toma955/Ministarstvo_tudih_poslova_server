@@ -66,6 +66,9 @@ function inboxItemFromMessage(message, isComplete) {
     created_at: message.created_at,
     completed_at: message.completed_at || null,
     is_complete: isComplete,
+    sample_rate: message.sample_rate ?? null,
+    has_final_audio: Boolean(message.has_final_audio),
+    audio_quality: message.audio_quality || (message.has_final_audio ? "final" : "live"),
   };
 }
 
@@ -88,6 +91,9 @@ export function createVoiceSession({
     created_at: new Date().toISOString(),
     completed: false,
     plaintext: false,
+    sample_rate: null,
+    has_final_audio: false,
+    audio_quality: "live",
   });
   return activeSessions.get(sessionId);
 }
@@ -190,11 +196,54 @@ export function completeVoiceSession(sessionId, senderName, sequence) {
     person_feedback: [],
     plaintext: Boolean(session.plaintext),
     wav_data: null,
+    sample_rate: session.sample_rate ?? 16000,
+    has_final_audio: false,
+    audio_quality: "live",
   };
 
   activeSessions.delete(sessionId);
   completedMessages.unshift(message);
   trimCompletedMessages();
+
+  return message;
+}
+
+/**
+ * Zamijeni live (LQ) chunkove finalnom HQ snimkom nakon complete.
+ * @param {string} sessionId
+ * @param {{ sequence: number, encryption_version?: number, ciphertext_base64: string }[]} chunks
+ * @param {number|null} sampleRate
+ */
+export function replaceFinalAudio(sessionId, chunks, sampleRate = null) {
+  const message = getCompletedMessage(sessionId);
+  if (!message || message.plaintext) return null;
+  if (!Array.isArray(chunks) || chunks.length === 0) return null;
+
+  const nextChunks = new Map();
+  let maxSequence = -1;
+
+  for (const chunk of chunks) {
+    const sequence = Number(chunk.sequence);
+    const ciphertextBase64 = chunk.ciphertext_base64;
+    if (!Number.isFinite(sequence) || !ciphertextBase64) continue;
+
+    const seq = Math.trunc(sequence);
+    nextChunks.set(seq, {
+      version: chunk.encryption_version ?? 1,
+      ciphertext: Buffer.from(ciphertextBase64, "base64"),
+    });
+    maxSequence = Math.max(maxSequence, seq);
+  }
+
+  if (nextChunks.size === 0) return null;
+
+  message.chunks = nextChunks;
+  message.chunk_count = nextChunks.size;
+  message.sequence = Math.max(message.sequence ?? 0, maxSequence);
+  message.sample_rate = Number.isFinite(sampleRate) ? sampleRate : message.sample_rate;
+  message.has_final_audio = true;
+  message.audio_quality = "final";
+  message.final_uploaded_at = new Date().toISOString();
 
   return message;
 }
@@ -263,6 +312,9 @@ export function getDeliveryPackage(sessionId, recipientDeviceId) {
       is_plaintext: true,
       wrapped_key: null,
       chunks: serializeChunks(message.chunks, true),
+      sample_rate: message.sample_rate ?? null,
+      has_final_audio: Boolean(message.has_final_audio),
+      audio_quality: message.audio_quality || (message.has_final_audio ? "final" : "live"),
     };
   }
 
@@ -284,6 +336,9 @@ export function getDeliveryPackage(sessionId, recipientDeviceId) {
       ciphertext_base64: keyOffer.ciphertext_base64,
     },
     chunks: serializeChunks(message.chunks),
+    sample_rate: message.sample_rate ?? null,
+    has_final_audio: Boolean(message.has_final_audio),
+    audio_quality: message.audio_quality || (message.has_final_audio ? "final" : "live"),
   };
 }
 

@@ -107,26 +107,32 @@ export function isApnsConfigured() {
   return apnsEnabled();
 }
 
-export async function sendVoiceMessagePush({ deviceIds, sessionId, senderName, sourceType }) {
+export async function sendVoiceMessagePush({ deviceIds, sessionId, senderName, sourceType, eventType = "voice_message" }) {
   if (!apnsEnabled() || !deviceIds?.length) return { sent: 0 };
 
   const tokens = getPushTokensForDevices(deviceIds);
   if (!tokens.length) return { sent: 0 };
 
-  const title =
-    sourceType === "server" ? "Obavijest centra" : "Nova glasovna poruka";
-  const body = senderName ? `Od: ${senderName}` : "Nova poruka u kanalu";
+  const isLive = eventType === "voice_started";
+  const title = isLive
+    ? "Uživo prijenos"
+    : sourceType === "server"
+      ? "Obavijest centra"
+      : "Nova glasovna poruka";
+  const body = senderName
+    ? (isLive ? `${senderName} govori…` : `Od: ${senderName}`)
+    : (isLive ? "Netko govori u kanalu" : "Nova poruka u kanalu");
 
   let sent = 0;
   for (const row of tokens) {
     const payload = {
       aps: {
         alert: { title, body },
-        sound: "default",
+        sound: isLive ? undefined : "default",
         "content-available": 1,
       },
       session_id: sessionId,
-      type: "voice_message",
+      type: eventType,
     };
 
     const result = await sendToDevice(row.apns_token, payload);

@@ -19,6 +19,10 @@ export async function notifyVoiceMessageRecipients(message) {
     recipientIds = Object.keys(message.key_offers).filter(
       (id) => id !== message.sender_device_id
     );
+  } else if (message.room_code) {
+    recipientIds = listDeviceIdsInRoom(message.room_code).filter(
+      (id) => id !== message.sender_device_id && id !== SERVER_SENDER_ID
+    );
   }
 
   if (!recipientIds.length) return { sent: 0 };
@@ -28,5 +32,22 @@ export async function notifyVoiceMessageRecipients(message) {
     sessionId: message.session_id,
     senderName: message.sender_name,
     sourceType: message.source_type || "radio",
+  });
+}
+
+export async function notifyVoiceStarted(message) {
+  if (!message?.session_id || !message.room_code) return { sent: 0 };
+
+  const recipientIds = listDeviceIdsInRoom(message.room_code).filter(
+    (id) => id !== message.sender_device_id && id !== SERVER_SENDER_ID
+  );
+  if (!recipientIds.length) return { sent: 0 };
+
+  return sendVoiceMessagePush({
+    deviceIds: recipientIds,
+    sessionId: message.session_id,
+    senderName: message.sender_name,
+    sourceType: message.source_type || "radio",
+    eventType: "voice_started",
   });
 }

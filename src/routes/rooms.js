@@ -1,8 +1,10 @@
 import { Router } from "express";
 import { config } from "../config.js";
 import { signToken, authMiddleware } from "../middleware/auth.js";
-import { joinRoom, getUser, ensureDefaultRoom } from "../db/database.js";
+import { joinRoom, getUser, ensureDefaultRoom, listDeviceIdsInRoom } from "../db/database.js";
 import { isApnsConfigured } from "../services/apns.js";
+import { voiceLog, shortId } from "../services/voiceLog.js";
+import { updateRealtimeRoom, realtimeStats } from "../services/realtime.js";
 
 const router = Router();
 
@@ -74,12 +76,25 @@ router.post("/join", (req, res) => {
     room_code: user.room_code,
   });
 
+  updateRealtimeRoom(deviceId, user.room_code);
+  const members = listDeviceIdsInRoom(user.room_code);
+  const live = realtimeStats();
+  voiceLog("ROOM_JOIN", {
+    device: shortId(deviceId),
+    name: user.sender_name || user.display_name || displayName || null,
+    room: user.room_code,
+    users_in_room: members.length,
+    device_ids: members.map(shortId),
+    sse_devices: live.devices,
+    sse_connections: live.connections,
+  });
+
   res.json({
     access_token: token,
     expires_in: config.jwtExpiresIn,
     room_code: user.room_code,
     device_id: user.device_id,
-    room_member_count: result.room_member_count ?? 1,
+    room_member_count: result.room_member_count ?? members.length,
   });
 });
 

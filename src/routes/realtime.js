@@ -17,6 +17,9 @@ router.get("/events", authMiddleware(), (req, res) => {
   }
 
   const user = getUser(deviceId);
+  console.log(
+    `[voice] ${new Date().toISOString()} SSE_ROUTE_HIT | device=${String(deviceId).slice(0, 8)}… | room=${user?.room_code || "-"}`
+  );
   attachRealtimeClient(res, deviceId, user?.room_code || null);
 });
 

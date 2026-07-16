@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { v4 as uuidv4 } from "uuid";
 import { authMiddleware } from "../middleware/auth.js";
-import { getUser } from "../db/database.js";
+import { getUser, listDeviceIdsInRoom } from "../db/database.js";
 import {
   createVoiceSession,
   getActiveSession,
@@ -22,7 +22,9 @@ import {
   broadcastVoiceChunk,
   broadcastVoiceComplete,
   broadcastVoiceFinal,
+  realtimeStats,
 } from "../services/realtime.js";
+import { voiceLog, shortId, logDeviceRoom } from "../services/voiceLog.js";
 
 const router = Router();
 
@@ -50,7 +52,14 @@ router.get("/inbox", authMiddleware(), (req, res) => {
   const deviceId = requireUser(req, res);
   if (!deviceId) return;
 
-  res.json({ messages: listInboxForDevice(deviceId) });
+  const messages = listInboxForDevice(deviceId);
+  logDeviceRoom("INBOX_FETCH", deviceId, {
+    messages: messages.length,
+    active: messages.filter((m) => !m.is_complete).length,
+    complete: messages.filter((m) => m.is_complete).length,
+  });
+
+  res.json({ messages });
 });
 
 router.post("/", authMiddleware(), (req, res) => {
@@ -59,6 +68,10 @@ router.post("/", authMiddleware(), (req, res) => {
 
   const user = getUser(deviceId);
   if (!user?.room_code) {
+    voiceLog("SESSION_CREATE_BLOCKED", {
+      device: shortId(deviceId),
+      reason: "not_in_room",
+    });
     return res.status(403).json({
       error: "forbidden",
       message: "Niste u sobi. Unesite ključ sobe u aplikaciji.",
@@ -72,6 +85,8 @@ router.post("/", authMiddleware(), (req, res) => {
     "Nepoznato";
 
   const sourceType = user?.is_base_station ? "base" : "radio";
+  const roomUsers = listDeviceIdsInRoom(user.room_code);
+  const live = realtimeStats();
 
   const sessionId = uuidv4();
   const session = createVoiceSession({
@@ -82,10 +97,30 @@ router.post("/", authMiddleware(), (req, res) => {
     roomCode: user?.room_code || null,
   });
 
+  voiceLog("SESSION_CREATE", {
+    session: shortId(sessionId),
+    sender: shortId(deviceId),
+    name: senderName,
+    room: user.room_code,
+    users_in_room: roomUsers.length,
+    recipients: Math.max(roomUsers.length - 1, 0),
+    sse_devices: live.devices,
+    sse_connections: live.connections,
+    quality_plan: "LOW live 16kHz → HIGH final 44.1kHz",
+  });
+
   // Obavijesti sobu da streaming počinje — klijenti zaključaju snimanje.
-  broadcastVoiceStarted(session);
+  const started = broadcastVoiceStarted(session);
   notifyVoiceStarted(session).catch((error) => {
     console.warn("[push] voice_started notify failed", error.message);
+  });
+
+  voiceLog("LOW_STREAM_BEGIN", {
+    session: shortId(sessionId),
+    room: user.room_code,
+    users_in_room: roomUsers.length,
+    sse_delivered: started.sent,
+    no_sse: started.offline,
   });
 
   res.status(201).json({ session_id: sessionId });
@@ -151,6 +186,16 @@ router.post("/:sessionId/key-offers", authMiddleware(), (req, res) => {
     applied += 1;
   }
 
+  voiceLog("KEY_OFFERS", {
+    session: shortId(sessionId),
+    sender: shortId(deviceId),
+    room: sessionRoom,
+    users_in_room: sessionRoom ? listDeviceIdsInRoom(sessionRoom).length : 0,
+    applied,
+    skipped,
+    offers_sent: offers.length,
+  });
+
   res.json({
     ok: true,
     count: applied,
@@ -201,6 +246,19 @@ router.post("/:sessionId/chunks", authMiddleware(), (req, res) => {
     return res.status(409).json({
       error: "conflict",
       message: "Chunk nije moguće spremiti. Sesija je završena ili ne postoji.",
+    });
+  }
+
+  if (parsedSequence === 0 || chunk.chunks.size === 1) {
+    voiceLog("LOW_CHUNK_FIRST", {
+      session: shortId(sessionId),
+      sender: shortId(deviceId),
+      name: session.sender_name,
+      room: session.room_code,
+      users_in_room: session.room_code ? listDeviceIdsInRoom(session.room_code).length : 0,
+      quality: "LOW/live 16kHz",
+      cipher_bytes: Buffer.from(ciphertextBase64, "base64").length,
+      key_offers: session.key_offers?.size ?? 0,
     });
   }
 
@@ -257,6 +315,17 @@ router.post("/:sessionId/complete", authMiddleware(), (req, res) => {
   const keyOfferCount = completed.key_offers?.size ?? 0;
   const chunkCount = completed.chunk_count ?? 0;
 
+  voiceLog("LOW_STREAM_COMPLETE", {
+    session: shortId(sessionId),
+    sender: shortId(deviceId),
+    name: resolvedName,
+    room: completed.room_code,
+    users_in_room: completed.room_code ? listDeviceIdsInRoom(completed.room_code).length : 0,
+    low_chunks: chunkCount,
+    key_offers: keyOfferCount,
+    quality: "LOW complete — waiting HQ",
+  });
+
   broadcastVoiceComplete(completed);
 
   notifyVoiceMessageRecipients(completed).catch((error) => {
@@ -294,15 +363,28 @@ router.post("/:sessionId/final", authMiddleware(), (req, res) => {
     });
   }
 
+  voiceLog("HQ_UPLOAD_BEGIN", {
+    session: shortId(sessionId),
+    sender: shortId(deviceId),
+    quality: "HIGH/final 44.1kHz",
+    hq_chunks: chunks.length,
+    sample_rate: sampleRate ?? 44100,
+  });
+
   const message = getCompletedMessage(sessionId);
   if (!message) {
     const active = getActiveSession(sessionId);
     if (active) {
+      voiceLog("HQ_UPLOAD_TOO_EARLY", {
+        session: shortId(sessionId),
+        reason: "session_still_active",
+      });
       return res.status(409).json({
         error: "conflict",
         message: "Prvo završi sesiju (complete), zatim pošalji finalnu snimku.",
       });
     }
+    voiceLog("HQ_UPLOAD_MISSING", { session: shortId(sessionId) });
     return res.status(404).json({ error: "not_found", message: "Sesija nije pronađena." });
   }
 
@@ -336,6 +418,17 @@ router.post("/:sessionId/final", authMiddleware(), (req, res) => {
 
   broadcastVoiceFinal(updated, finalChunks);
 
+  voiceLog("HQ_UPLOAD_DONE", {
+    session: shortId(sessionId),
+    sender: shortId(deviceId),
+    name: updated.sender_name,
+    room: updated.room_code,
+    users_in_room: updated.room_code ? listDeviceIdsInRoom(updated.room_code).length : 0,
+    quality: "HIGH/final replaced LOW",
+    hq_chunks: updated.chunk_count,
+    sample_rate: updated.sample_rate,
+  });
+
   res.json({
     ok: true,
     chunk_count: updated.chunk_count,
@@ -353,11 +446,25 @@ router.get("/:sessionId/delivery", authMiddleware(), (req, res) => {
   const payload = getDeliveryPackage(sessionId, deviceId);
 
   if (!payload) {
+    voiceLog("DELIVERY_DENIED", {
+      session: shortId(sessionId),
+      device: shortId(deviceId),
+    });
     return res.status(404).json({
       error: "not_found",
       message: "Poruka nije dostupna za ovaj uređaj.",
     });
   }
+
+  voiceLog("DELIVERY_OK", {
+    session: shortId(sessionId),
+    device: shortId(deviceId),
+    chunks: payload.chunks?.length ?? 0,
+    complete: payload.is_complete,
+    quality: payload.audio_quality || (payload.has_final_audio ? "final" : "live"),
+    has_final: Boolean(payload.has_final_audio),
+    sample_rate: payload.sample_rate,
+  });
 
   const sender = getUser(payload.sender_device_id);
   res.json({

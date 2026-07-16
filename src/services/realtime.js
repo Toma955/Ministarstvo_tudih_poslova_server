@@ -4,6 +4,7 @@
 //
 
 import { getUser, listDeviceIdsInRoom } from "../db/database.js";
+import { voiceLog, shortId, roomSnapshot } from "./voiceLog.js";
 
 /** @typedef {{ res: import('express').Response, deviceId: string, roomCode: string|null }} RealtimeClient */
 
@@ -31,12 +32,21 @@ export function attachRealtimeClient(res, deviceId, roomCode) {
   }
   clientsByDevice.get(deviceId).add(client);
 
+  const snap = roomSnapshot(roomCode);
+  const live = realtimeStats();
+  voiceLog("SSE_CONNECT", {
+    device: shortId(deviceId),
+    ...snap,
+    sse_devices: live.devices,
+    sse_connections: live.connections,
+  });
+
   writeEvent(res, "connected", {
     device_id: deviceId,
     room_code: roomCode || null,
+    users_in_room: snap.users_in_room,
   });
 
-  // Keepalive — proxy/load balancer ne zatvara idle vezu.
   const heartbeat = setInterval(() => {
     if (res.writableEnded) {
       clearInterval(heartbeat);
@@ -51,6 +61,13 @@ export function attachRealtimeClient(res, deviceId, roomCode) {
     if (!set) return;
     set.delete(client);
     if (set.size === 0) clientsByDevice.delete(deviceId);
+    const after = realtimeStats();
+    voiceLog("SSE_DISCONNECT", {
+      device: shortId(deviceId),
+      room: roomCode || null,
+      sse_devices: after.devices,
+      sse_connections: after.connections,
+    });
   };
 
   res.on("close", cleanup);
@@ -65,17 +82,28 @@ export function updateRealtimeRoom(deviceId, roomCode) {
   for (const client of set) {
     client.roomCode = roomCode || null;
   }
+  voiceLog("SSE_ROOM_UPDATE", {
+    device: shortId(deviceId),
+    ...roomSnapshot(roomCode),
+  });
 }
 
 function emitToDevice(deviceId, event, data) {
   const set = clientsByDevice.get(deviceId);
-  if (!set) return 0;
+  if (!set || set.size === 0) {
+    return 0;
+  }
   let sent = 0;
   for (const client of [...set]) {
     try {
       writeEvent(client.res, event, data);
       sent += 1;
-    } catch {
+    } catch (error) {
+      voiceLog("SSE_EMIT_FAIL", {
+        device: shortId(deviceId),
+        event,
+        error: error?.message || String(error),
+      });
       set.delete(client);
     }
   }
@@ -96,9 +124,6 @@ function recipientIdsForMessage(message, excludeDeviceId) {
   return ids.filter((id) => id && id !== excludeDeviceId);
 }
 
-/**
- * Server → uređaji u sobi: streaming počinje.
- */
 export function broadcastVoiceStarted(message) {
   if (!message?.session_id) return { sent: 0 };
   const payload = {
@@ -111,16 +136,28 @@ export function broadcastVoiceStarted(message) {
     audio_quality: "live",
   };
 
+  const targets = recipientIdsForMessage(message, message.sender_device_id);
   let sent = 0;
-  for (const deviceId of recipientIdsForMessage(message, message.sender_device_id)) {
-    sent += emitToDevice(deviceId, "voice_started", payload);
+  let offline = 0;
+  for (const deviceId of targets) {
+    const n = emitToDevice(deviceId, "voice_started", payload);
+    if (n > 0) sent += n;
+    else offline += 1;
   }
-  return { sent };
+
+  voiceLog("BROADCAST_VOICE_STARTED", {
+    session: shortId(message.session_id),
+    sender: shortId(message.sender_device_id),
+    name: message.sender_name,
+    ...roomSnapshot(message.room_code),
+    targets: targets.length,
+    sse_delivered: sent,
+    no_sse: offline,
+  });
+
+  return { sent, targets: targets.length, offline };
 }
 
-/**
- * Server → uređaji: live PCM chunk (već enkriptiran ciphertext).
- */
 export function broadcastVoiceChunk(message, chunk) {
   if (!message?.session_id || !chunk) return { sent: 0 };
 
@@ -139,19 +176,44 @@ export function broadcastVoiceChunk(message, chunk) {
     audio_quality: "live",
   };
 
-  if (!payload.ciphertext_base64) return { sent: 0 };
+  if (!payload.ciphertext_base64) {
+    voiceLog("BROADCAST_LQ_CHUNK_SKIP", {
+      session: shortId(message.session_id),
+      sequence: chunk.sequence,
+      reason: "empty_ciphertext",
+    });
+    return { sent: 0 };
+  }
 
-  let sent = 0;
-  // Samo oni koji imaju key offer (mogu dekriptirati), inače cijela soba.
   const targets =
     message.key_offers instanceof Map && message.key_offers.size > 0
       ? [...message.key_offers.keys()].filter((id) => id !== message.sender_device_id)
       : recipientIdsForMessage(message, message.sender_device_id);
 
+  let sent = 0;
+  let offline = 0;
   for (const deviceId of targets) {
-    sent += emitToDevice(deviceId, "voice_chunk", payload);
+    const n = emitToDevice(deviceId, "voice_chunk", payload);
+    if (n > 0) sent += n;
+    else offline += 1;
   }
-  return { sent };
+
+  const cipherBytes = Buffer.from(payload.ciphertext_base64, "base64").length;
+  const seq = Number(chunk.sequence) || 0;
+  if (seq === 0 || seq % 5 === 0) {
+    voiceLog("BROADCAST_LQ_CHUNK", {
+      session: shortId(message.session_id),
+      sequence: seq,
+      quality: "LOW/live 16kHz",
+      bytes: cipherBytes,
+      targets: targets.length,
+      sse_delivered: sent,
+      no_sse: offline,
+      key_offers: message.key_offers instanceof Map ? message.key_offers.size : 0,
+    });
+  }
+
+  return { sent, targets: targets.length, offline };
 }
 
 export function broadcastVoiceComplete(message) {
@@ -167,23 +229,42 @@ export function broadcastVoiceComplete(message) {
     audio_quality: message.audio_quality || "live",
   };
 
+  const targets = recipientIdsForMessage(message, message.sender_device_id);
   let sent = 0;
-  for (const deviceId of recipientIdsForMessage(message, message.sender_device_id)) {
-    sent += emitToDevice(deviceId, "voice_complete", payload);
+  let offline = 0;
+  for (const deviceId of targets) {
+    const n = emitToDevice(deviceId, "voice_complete", payload);
+    if (n > 0) sent += n;
+    else offline += 1;
   }
-  return { sent };
+
+  voiceLog("BROADCAST_VOICE_COMPLETE", {
+    session: shortId(message.session_id),
+    sender: shortId(message.sender_device_id),
+    name: message.sender_name,
+    chunks: message.chunk_count ?? message.chunks?.size ?? 0,
+    quality: "LOW complete — čeka HQ",
+    ...roomSnapshot(message.room_code),
+    targets: targets.length,
+    sse_delivered: sent,
+    no_sse: offline,
+  });
+
+  return { sent, targets: targets.length, offline };
 }
 
 export function broadcastVoiceFinal(message, chunks) {
   if (!message?.session_id) return { sent: 0 };
 
-  const serialized = (chunks || []).map((chunk) => ({
-    sequence: chunk.sequence,
-    encryption_version: chunk.encryption_version ?? chunk.version ?? 1,
-    ciphertext_base64:
-      chunk.ciphertext_base64 ||
-      (Buffer.isBuffer(chunk.ciphertext) ? chunk.ciphertext.toString("base64") : null),
-  })).filter((c) => c.ciphertext_base64);
+  const serialized = (chunks || [])
+    .map((chunk) => ({
+      sequence: chunk.sequence,
+      encryption_version: chunk.encryption_version ?? chunk.version ?? 1,
+      ciphertext_base64:
+        chunk.ciphertext_base64 ||
+        (Buffer.isBuffer(chunk.ciphertext) ? chunk.ciphertext.toString("base64") : null),
+    }))
+    .filter((c) => c.ciphertext_base64);
 
   const payload = {
     session_id: message.session_id,
@@ -196,16 +277,39 @@ export function broadcastVoiceFinal(message, chunks) {
     chunks: serialized,
   };
 
-  let sent = 0;
   const targets =
     message.key_offers instanceof Map && message.key_offers.size > 0
       ? [...message.key_offers.keys()].filter((id) => id !== message.sender_device_id)
       : recipientIdsForMessage(message, message.sender_device_id);
 
+  let sent = 0;
+  let offline = 0;
   for (const deviceId of targets) {
-    sent += emitToDevice(deviceId, "voice_final", payload);
+    const n = emitToDevice(deviceId, "voice_final", payload);
+    if (n > 0) sent += n;
+    else offline += 1;
   }
-  return { sent };
+
+  const totalBytes = serialized.reduce(
+    (sum, c) => sum + Buffer.from(c.ciphertext_base64, "base64").length,
+    0
+  );
+
+  voiceLog("BROADCAST_HQ_FINAL", {
+    session: shortId(message.session_id),
+    sender: shortId(message.sender_device_id),
+    name: message.sender_name,
+    quality: "HIGH/final 44.1kHz",
+    hq_chunks: serialized.length,
+    hq_bytes: totalBytes,
+    sample_rate: payload.sample_rate,
+    ...roomSnapshot(message.room_code),
+    targets: targets.length,
+    sse_delivered: sent,
+    no_sse: offline,
+  });
+
+  return { sent, targets: targets.length, offline };
 }
 
 export function realtimeStats() {

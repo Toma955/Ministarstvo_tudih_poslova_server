@@ -31,7 +31,7 @@ import {
   uuidv4,
 } from "../stores/voiceMessageStore.js";
 import { notifyVoiceMessageRecipients } from "../services/notifications.js";
-import { broadcastRoomClosed } from "../services/realtime.js";
+import { broadcastRoomClosed, broadcastAccountDeleted } from "../services/realtime.js";
 
 const router = Router();
 
@@ -89,12 +89,14 @@ router.get("/users/:deviceId", authMiddleware("admin"), (req, res) => {
 });
 
 router.delete("/users/:deviceId", authMiddleware("admin"), (req, res) => {
-  purgeUserFromMemory(req.params.deviceId);
-  const deleted = deleteUser(req.params.deviceId);
+  const deviceId = req.params.deviceId;
+  broadcastAccountDeleted(deviceId, "admin");
+  purgeUserFromMemory(deviceId);
+  const deleted = deleteUser(deviceId);
   if (!deleted) {
     return res.status(404).json({ error: "not_found", message: "Korisnik nije pronađen." });
   }
-  res.json({ ok: true });
+  res.json({ ok: true, kicked: true });
 });
 
 router.get("/rooms", authMiddleware("admin"), (_req, res) => {

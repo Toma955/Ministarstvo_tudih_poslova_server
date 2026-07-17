@@ -351,6 +351,31 @@ export function broadcastRoomClosed(roomCode, reason = "deleted") {
   return { sent, targets: targets.length };
 }
 
+/**
+ * Admin (ili sustav) je obrisao račun — odmah kick uređaja.
+ */
+export function broadcastAccountDeleted(deviceId, reason = "deleted") {
+  if (!deviceId) return { sent: 0 };
+
+  const payload = {
+    device_id: deviceId,
+    reason,
+    message:
+      reason === "admin"
+        ? "Račun je obrisan od strane administracije. Sesija je prekinuta."
+        : "Račun je obrisan. Sesija je prekinuta.",
+  };
+
+  const sent = emitToDevice(deviceId, "account_deleted", payload);
+  voiceLog("BROADCAST_ACCOUNT_DELETED", {
+    device: shortId(deviceId),
+    reason,
+    sse_delivered: sent,
+  });
+  closeRealtimeClientsForDevice(deviceId);
+  return { sent };
+}
+
 /** Šalje ažurirani profil (ime/avatar) ostalim uređajima u sobi. */
 export function broadcastProfileUpdated(user, excludeDeviceId = null) {
   if (!user?.device_id || !user.room_code) return { sent: 0, targets: 0 };

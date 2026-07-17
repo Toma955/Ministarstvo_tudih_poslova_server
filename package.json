@@ -8,7 +8,8 @@
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "seed": "node src/scripts/seed.js",
-    "test": "node --import ./test/helpers/preload.js --test test/**/*.test.js"
+    "test": "node --import ./test/helpers/preload.js --test --test-reporter=spec --test-reporter-destination=stdout test/**/*.test.js",
+    "test:watch": "node --import ./test/helpers/preload.js --test --watch --test-reporter=spec test/**/*.test.js"
   },
   "engines": {
     "node": ">=20"

@@ -10,6 +10,12 @@ export const SOURCE_TYPES = new Set(["base", "radio", "server"]);
 const activeSessions = new Map();
 const completedMessages = [];
 
+/** iOS šalje UUID u URL-u velikim slovima; Node uuid je lowercase. */
+function normalizeSessionId(sessionId) {
+  if (sessionId == null) return "";
+  return String(sessionId).trim().toLowerCase();
+}
+
 function normalizeFeedbackKind(kind) {
   const map = {
     personDelivered: "person_delivered",
@@ -79,8 +85,9 @@ export function createVoiceSession({
   sourceType = "radio",
   roomCode = null,
 }) {
-  activeSessions.set(sessionId, {
-    session_id: sessionId,
+  const id = normalizeSessionId(sessionId);
+  activeSessions.set(id, {
+    session_id: id,
     sender_device_id: senderDeviceId,
     sender_name: senderName,
     source_type: normalizeSourceType(sourceType),
@@ -96,7 +103,7 @@ export function createVoiceSession({
     audio_quality: "live",
     started_notified: false,
   });
-  return activeSessions.get(sessionId);
+  return activeSessions.get(id);
 }
 
 export function createServerBroadcast({ sessionId, roomCode, senderName, wavBuffer }) {
@@ -135,7 +142,7 @@ export function createServerBroadcast({ sessionId, roomCode, senderName, wavBuff
 }
 
 export function getActiveSession(sessionId) {
-  return activeSessions.get(sessionId);
+  return activeSessions.get(normalizeSessionId(sessionId));
 }
 
 export function getMessageRecord(sessionId) {
@@ -143,7 +150,8 @@ export function getMessageRecord(sessionId) {
 }
 
 export function addKeyOffer(sessionId, recipientDeviceId, encryptionVersion, ciphertextBase64) {
-  const message = getMessageRecord(sessionId);
+  const id = normalizeSessionId(sessionId);
+  const message = getMessageRecord(id);
   if (!message || message.plaintext) return null;
 
   if (!message.key_offers) {
@@ -159,7 +167,8 @@ export function addKeyOffer(sessionId, recipientDeviceId, encryptionVersion, cip
 }
 
 export function addEncryptedChunk(sessionId, sequence, encryptionVersion, ciphertextBase64) {
-  const session = activeSessions.get(sessionId);
+  const id = normalizeSessionId(sessionId);
+  const session = activeSessions.get(id);
   if (!session) return null;
   if (session.completed || session.plaintext) return null;
 
@@ -173,7 +182,8 @@ export function addEncryptedChunk(sessionId, sequence, encryptionVersion, cipher
 }
 
 export function completeVoiceSession(sessionId, senderName, sequence) {
-  const session = activeSessions.get(sessionId);
+  const id = normalizeSessionId(sessionId);
+  const session = activeSessions.get(id);
   if (!session) return null;
 
   session.completed = true;
@@ -182,7 +192,7 @@ export function completeVoiceSession(sessionId, senderName, sequence) {
   session.completed_at = new Date().toISOString();
 
   const message = {
-    session_id: sessionId,
+    session_id: id,
     sender_device_id: session.sender_device_id,
     sender_name: session.sender_name,
     source_type: session.source_type || "radio",
@@ -202,7 +212,7 @@ export function completeVoiceSession(sessionId, senderName, sequence) {
     audio_quality: "live",
   };
 
-  activeSessions.delete(sessionId);
+  activeSessions.delete(id);
   completedMessages.unshift(message);
   trimCompletedMessages();
 
@@ -216,7 +226,8 @@ export function completeVoiceSession(sessionId, senderName, sequence) {
  * @param {number|null} sampleRate
  */
 export function replaceFinalAudio(sessionId, chunks, sampleRate = null) {
-  const message = getCompletedMessage(sessionId);
+  const id = normalizeSessionId(sessionId);
+  const message = getCompletedMessage(id);
   if (!message || message.plaintext) return null;
   if (!Array.isArray(chunks) || chunks.length === 0) return null;
 
@@ -250,7 +261,8 @@ export function replaceFinalAudio(sessionId, chunks, sampleRate = null) {
 }
 
 export function getCompletedMessage(sessionId) {
-  return completedMessages.find((m) => m.session_id === sessionId) || null;
+  const id = normalizeSessionId(sessionId);
+  return completedMessages.find((m) => normalizeSessionId(m.session_id) === id) || null;
 }
 
 export function getAdminMessageAudio(sessionId) {
@@ -293,7 +305,8 @@ export function listInboxForDevice(deviceId) {
 }
 
 export function getDeliveryPackage(sessionId, recipientDeviceId, options = {}) {
-  const message = getMessageRecord(sessionId);
+  const id = normalizeSessionId(sessionId);
+  const message = getMessageRecord(id);
   if (!message) return { error: "missing_message" };
   if (message.sender_device_id === recipientDeviceId) return { error: "own_message" };
 
@@ -313,7 +326,7 @@ export function getDeliveryPackage(sessionId, recipientDeviceId, options = {}) {
     }
 
     return {
-      session_id: sessionId,
+      session_id: id,
       sender_device_id: message.sender_device_id,
       sender_name: message.sender_name,
       source_type: "server",
@@ -340,7 +353,7 @@ export function getDeliveryPackage(sessionId, recipientDeviceId, options = {}) {
   if (!keyOffer) {
     // Istoj sobi, ali ključ još nije stigao — klijent treba retry, ne 404.
     return {
-      session_id: sessionId,
+      session_id: id,
       sender_device_id: message.sender_device_id,
       sender_name: message.sender_name,
       source_type: message.source_type || "radio",
@@ -357,7 +370,7 @@ export function getDeliveryPackage(sessionId, recipientDeviceId, options = {}) {
   }
 
   return {
-    session_id: sessionId,
+    session_id: id,
     sender_device_id: message.sender_device_id,
     sender_name: message.sender_name,
     source_type: message.source_type || "radio",
@@ -415,7 +428,8 @@ export function listActiveSessionsForAdmin() {
 }
 
 export function deleteCompletedMessage(sessionId) {
-  const index = completedMessages.findIndex((m) => m.session_id === sessionId);
+  const id = normalizeSessionId(sessionId);
+  const index = completedMessages.findIndex((m) => normalizeSessionId(m.session_id) === id);
   if (index === -1) return false;
   completedMessages.splice(index, 1);
   return true;
@@ -509,7 +523,7 @@ export function feedbackState(sessionId) {
   const message = getCompletedMessage(sessionId);
   if (!message) {
     return {
-      session_id: sessionId,
+      session_id: id,
       base_feedback: null,
       person_feedback: [],
     };

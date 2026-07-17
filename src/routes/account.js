@@ -2,6 +2,7 @@ import { Router } from "express";
 import { authMiddleware } from "../middleware/auth.js";
 import { deleteUser, getUser } from "../db/database.js";
 import { purgeUserFromMemory } from "../stores/voiceMessageStore.js";
+import { broadcastAccountDeleted } from "../services/realtime.js";
 
 const router = Router();
 
@@ -23,6 +24,7 @@ router.delete("/", authMiddleware(), (req, res) => {
     return res.status(404).json({ error: "not_found", message: "Račun nije pronađen." });
   }
 
+  broadcastAccountDeleted(deviceId, "self");
   purgeUserFromMemory(deviceId);
   const deleted = deleteUser(deviceId);
   if (!deleted) {

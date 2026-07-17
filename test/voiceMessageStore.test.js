@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { after, beforeEach, describe, it } from "node:test";
+import { after, before, beforeEach, describe, it } from "node:test";
 import { cleanupTestDatabase } from "./helpers/preload.js";
+import { progressReset, progressStep, progressOk, progressDone } from "./helpers/progress.js";
 import {
   createVoiceSession,
   addKeyOffer,
@@ -15,6 +16,7 @@ import {
   applyFeedback,
   feedbackState,
   getCompletedMessage,
+  getActiveSession,
 } from "../src/stores/voiceMessageStore.js";
 import { upsertUser, ensureDefaultRoom } from "../src/db/database.js";
 
@@ -23,6 +25,10 @@ function fakeCipher(label) {
 }
 
 describe("voiceMessageStore — slanje / primanje / spremanje", () => {
+  before(() => {
+    progressReset("voiceMessageStore unit");
+  });
+
   beforeEach(() => {
     resetVoiceMemoryForTests();
     ensureDefaultRoom();
@@ -49,9 +55,11 @@ describe("voiceMessageStore — slanje / primanje / spremanje", () => {
   after(() => {
     resetVoiceMemoryForTests();
     cleanupTestDatabase();
+    progressDone("voiceMessageStore unit");
   });
 
   it("kreira sesiju i sprema LQ chunkove", () => {
+    progressStep("create session + LQ chunks");
     const sessionId = "11111111-1111-1111-1111-111111111111";
     createVoiceSession({
       sessionId,
@@ -68,6 +76,7 @@ describe("voiceMessageStore — slanje / primanje / spremanje", () => {
     assert.equal(afterChunk1.chunks.size, 2);
     assert.equal(afterChunk1.sequence, 1);
     assert.equal(memoryStats().active_sessions, 1);
+    progressOk("LQ chunks OK");
   });
 
   it("delivery bez key offera vraća key_pending (ne missing)", () => {
@@ -235,5 +244,24 @@ describe("voiceMessageStore — slanje / primanje / spremanje", () => {
     assert.equal(state.person_feedback[0].is_delivered, true);
     assert.equal(state.person_feedback[0].is_listened, true);
     assert.ok(getCompletedMessage(sessionId));
+  });
+
+  it("lookup radi s uppercase UUID (iOS uuidString)", () => {
+    const sessionId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+    createVoiceSession({
+      sessionId,
+      senderDeviceId: "sender-1",
+      senderName: "Sender",
+      roomCode: "kanal",
+    });
+    addKeyOffer(sessionId, "receiver-1", 1, fakeCipher("wrap"));
+    addEncryptedChunk(sessionId, 0, 1, fakeCipher("chunk"));
+
+    const upper = sessionId.toUpperCase();
+    assert.ok(getActiveSession(upper));
+    assert.ok(getDeliveryPackage(upper, "receiver-1").wrapped_key);
+    const completed = completeVoiceSession(upper, "Sender", 0);
+    assert.ok(completed);
+    assert.ok(getCompletedMessage(upper));
   });
 });

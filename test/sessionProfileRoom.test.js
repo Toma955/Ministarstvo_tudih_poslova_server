@@ -5,6 +5,7 @@ import { createApp } from "../src/app.js";
 import { resetVoiceMemoryForTests } from "../src/stores/voiceMessageStore.js";
 import { ensureDefaultRoom, getUser, createRoom } from "../src/db/database.js";
 import { signToken } from "../src/middleware/auth.js";
+import { progressReset, progressStep, progressOk, progressDone } from "./helpers/progress.js";
 
 function fakeKey(label) {
   return Buffer.from(label.padEnd(32, "0"), "utf8").toString("base64");
@@ -19,6 +20,8 @@ describe("HTTP session / room kick / profile fanout", () => {
   let adminToken;
 
   before(async () => {
+    progressReset("session / room kick / profile");
+    progressStep("Pokrećem test server…");
     ensureDefaultRoom();
     createRoom({ roomCode: "kickme", title: "Kick test" });
     const app = createApp({ quiet: true });
@@ -27,6 +30,7 @@ describe("HTTP session / room kick / profile fanout", () => {
     });
     const { port } = server.address();
     baseUrl = `http://127.0.0.1:${port}`;
+    progressOk(`Server live ${baseUrl}`);
 
     const login = await fetch(`${baseUrl}/admin/login`, {
       method: "POST",
@@ -54,14 +58,17 @@ describe("HTTP session / room kick / profile fanout", () => {
     if (!adminToken) {
       adminToken = signToken({ role: "admin", username: "admin" });
     }
+    progressOk("Admin token spreman");
   });
 
   after(async () => {
+    progressStep("Cleanup…");
     resetVoiceMemoryForTests();
     await new Promise((resolve, reject) => {
       server.close((err) => (err ? reject(err) : resolve()));
     });
     cleanupTestDatabase();
+    progressDone("session / room kick / profile");
   });
 
   beforeEach(() => {

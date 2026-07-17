@@ -376,7 +376,9 @@ export function broadcastAccountDeleted(deviceId, reason = "deleted") {
   return { sent };
 }
 
-/** Šalje ažurirani profil (ime/avatar) ostalim uređajima u sobi. */
+/** Šalje ažurirani profil (ime) ostalim uređajima u sobi.
+ * Avatar se NE šalje u SSE (prevelik JSON lomi stream) — klijenti ga povuku preko GET /users/peers.
+ */
 export function broadcastProfileUpdated(user, excludeDeviceId = null) {
   if (!user?.device_id || !user.room_code) return { sent: 0, targets: 0 };
 
@@ -385,12 +387,13 @@ export function broadcastProfileUpdated(user, excludeDeviceId = null) {
     (id) => id && id !== (excludeDeviceId || user.device_id)
   );
 
+  const hasAvatar = Boolean(user.avatar_jpeg_base64);
   const payload = {
     device_id: user.device_id,
     room_code: roomCode,
     display_name: user.display_name || "",
     sender_name: user.sender_name || user.display_name || "Nepoznato",
-    avatar_jpeg_base64: user.avatar_jpeg_base64 || null,
+    has_avatar: hasAvatar,
     initials: (user.sender_name || user.display_name || "NE")
       .trim()
       .split(/\s+/)
@@ -413,7 +416,7 @@ export function broadcastProfileUpdated(user, excludeDeviceId = null) {
     room: roomCode,
     targets: targets.length,
     sse_delivered: sent,
-    has_avatar: Boolean(payload.avatar_jpeg_base64),
+    has_avatar: hasAvatar,
   });
 
   return { sent, targets: targets.length };

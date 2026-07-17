@@ -114,14 +114,17 @@ export async function sendVoiceMessagePush({ deviceIds, sessionId, senderName, s
   if (!tokens.length) return { sent: 0 };
 
   const isLive = eventType === "voice_started";
+  const name = (senderName || "").trim() || "Jedinica";
   const title = isLive
-    ? "Uživo prijenos"
+    ? "Uživo prijenos u kanalu"
     : sourceType === "server"
       ? "Obavijest centra"
       : "Nova glasovna poruka";
-  const body = senderName
-    ? (isLive ? `${senderName} govori…` : `Od: ${senderName}`)
-    : (isLive ? "Netko govori u kanalu" : "Nova poruka u kanalu");
+  const body = isLive
+    ? `${name} upravo govori. Otvorite aplikaciju za slušanje.`
+    : sourceType === "server"
+      ? `${name}: nova obavijest u kanalu.`
+      : `Poruka od ${name}. Dodirnite za reprodukciju.`;
 
   let sent = 0;
   for (const row of tokens) {

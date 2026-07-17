@@ -36,14 +36,32 @@ router.put("/", authMiddleware(), (req, res) => {
   const { display_name: displayName, avatar_jpeg_base64: avatarBase64 } = req.body || {};
   const existing = getUser(deviceId);
 
-  const name = typeof displayName === "string" ? displayName.trim() : existing?.display_name || "";
+  const name =
+    typeof displayName === "string" && displayName.trim()
+      ? displayName.trim()
+      : existing?.display_name || "";
+
+  // Privremeno na serveru (SQLite) — ime + JPEG avatar iz postavki aplikacije.
+  let avatar = existing?.avatar_jpeg_base64 || null;
+  if (typeof avatarBase64 === "string") {
+    const trimmed = avatarBase64.trim();
+    if (!trimmed) {
+      avatar = null;
+    } else if (trimmed.length > 900_000) {
+      return res.status(400).json({
+        error: "invalid_request",
+        message: "Avatar je prevelik (max ~650 KB JPEG).",
+      });
+    } else {
+      avatar = trimmed;
+    }
+  }
 
   upsertUser({
     device_id: deviceId,
-    display_name: name,
-    sender_name: name || existing?.sender_name || "Nepoznato",
-    avatar_jpeg_base64:
-      typeof avatarBase64 === "string" ? avatarBase64 : existing?.avatar_jpeg_base64 || null,
+    display_name: name || existing?.display_name || "",
+    sender_name: name || existing?.sender_name || existing?.display_name || "Nepoznato",
+    avatar_jpeg_base64: avatar,
     public_key_base64: existing?.public_key_base64 || null,
     room_code: existing?.room_code ?? null,
     is_base_station: existing?.is_base_station || 0,

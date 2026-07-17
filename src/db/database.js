@@ -154,7 +154,7 @@ export function upsertUser(user) {
     ON CONFLICT(device_id) DO UPDATE SET
       display_name = excluded.display_name,
       sender_name = excluded.sender_name,
-      avatar_jpeg_base64 = COALESCE(excluded.avatar_jpeg_base64, users.avatar_jpeg_base64),
+      avatar_jpeg_base64 = excluded.avatar_jpeg_base64,
       public_key_base64 = CASE
         WHEN excluded.public_key_base64 IS NOT NULL AND excluded.public_key_base64 != ''
         THEN excluded.public_key_base64

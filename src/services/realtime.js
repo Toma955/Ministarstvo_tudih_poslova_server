@@ -126,10 +126,17 @@ function recipientIdsForMessage(message, excludeDeviceId) {
 
 export function broadcastVoiceStarted(message) {
   if (!message?.session_id) return { sent: 0 };
+  const sender = getUser(message.sender_device_id);
+  const senderName =
+    message.sender_name ||
+    sender?.sender_name ||
+    sender?.display_name ||
+    "Nepoznato";
   const payload = {
     session_id: message.session_id,
     sender_device_id: message.sender_device_id,
-    sender_name: message.sender_name,
+    sender_name: senderName,
+    sender_avatar_jpeg_base64: sender?.avatar_jpeg_base64 || null,
     source_type: message.source_type || "radio",
     room_code: message.room_code || null,
     sample_rate: 16000,
@@ -185,10 +192,7 @@ export function broadcastVoiceChunk(message, chunk) {
     return { sent: 0 };
   }
 
-  const targets =
-    message.key_offers instanceof Map && message.key_offers.size > 0
-      ? [...message.key_offers.keys()].filter((id) => id !== message.sender_device_id)
-      : recipientIdsForMessage(message, message.sender_device_id);
+  const targets = recipientIdsForMessage(message, message.sender_device_id);
 
   let sent = 0;
   let offline = 0;
@@ -277,10 +281,7 @@ export function broadcastVoiceFinal(message, chunks) {
     chunks: serialized,
   };
 
-  const targets =
-    message.key_offers instanceof Map && message.key_offers.size > 0
-      ? [...message.key_offers.keys()].filter((id) => id !== message.sender_device_id)
-      : recipientIdsForMessage(message, message.sender_device_id);
+  const targets = recipientIdsForMessage(message, message.sender_device_id);
 
   let sent = 0;
   let offline = 0;

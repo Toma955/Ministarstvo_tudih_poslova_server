@@ -94,6 +94,7 @@ export function createVoiceSession({
     sample_rate: null,
     has_final_audio: false,
     audio_quality: "live",
+    started_notified: false,
   });
   return activeSessions.get(sessionId);
 }
@@ -291,16 +292,25 @@ export function listInboxForDevice(deviceId) {
   });
 }
 
-export function getDeliveryPackage(sessionId, recipientDeviceId) {
+export function getDeliveryPackage(sessionId, recipientDeviceId, options = {}) {
   const message = getMessageRecord(sessionId);
-  if (!message) return null;
-  if (message.sender_device_id === recipientDeviceId) return null;
+  if (!message) return { error: "missing_message" };
+  if (message.sender_device_id === recipientDeviceId) return { error: "own_message" };
 
   const user = getUser(recipientDeviceId);
-  const userRoom = user?.room_code || null;
+  const roomFromToken =
+    typeof options.roomFromToken === "string"
+      ? options.roomFromToken.trim().toLowerCase()
+      : null;
+  const userRoom = user?.room_code || roomFromToken || null;
 
   if (message.source_type === "server" || message.plaintext) {
-    if (!userRoom || message.room_code !== userRoom) return null;
+    if (!userRoom || message.room_code !== userRoom) {
+      return {
+        error: "room_mismatch",
+        detail: { userRoom, messageRoom: message.room_code || null },
+      };
+    }
 
     return {
       session_id: sessionId,
@@ -311,6 +321,7 @@ export function getDeliveryPackage(sessionId, recipientDeviceId) {
       is_complete: Boolean(message.completed_at || message.completed),
       is_plaintext: true,
       wrapped_key: null,
+      key_pending: false,
       chunks: serializeChunks(message.chunks, true),
       sample_rate: message.sample_rate ?? null,
       has_final_audio: Boolean(message.has_final_audio),
@@ -318,10 +329,32 @@ export function getDeliveryPackage(sessionId, recipientDeviceId) {
     };
   }
 
-  if (!userRoom || message.room_code !== userRoom) return null;
+  if (!userRoom || message.room_code !== userRoom) {
+    return {
+      error: "room_mismatch",
+      detail: { userRoom, messageRoom: message.room_code || null },
+    };
+  }
 
   const keyOffer = message.key_offers?.get(recipientDeviceId);
-  if (!keyOffer) return null;
+  if (!keyOffer) {
+    // Istoj sobi, ali ključ još nije stigao — klijent treba retry, ne 404.
+    return {
+      session_id: sessionId,
+      sender_device_id: message.sender_device_id,
+      sender_name: message.sender_name,
+      source_type: message.source_type || "radio",
+      sequence: message.sequence,
+      is_complete: Boolean(message.completed_at || message.completed),
+      is_plaintext: false,
+      wrapped_key: null,
+      key_pending: true,
+      chunks: [],
+      sample_rate: message.sample_rate ?? 16000,
+      has_final_audio: Boolean(message.has_final_audio),
+      audio_quality: message.audio_quality || (message.has_final_audio ? "final" : "live"),
+    };
+  }
 
   return {
     session_id: sessionId,
@@ -335,6 +368,7 @@ export function getDeliveryPackage(sessionId, recipientDeviceId) {
       encryption_version: keyOffer.version,
       ciphertext_base64: keyOffer.ciphertext_base64,
     },
+    key_pending: false,
     chunks: serializeChunks(message.chunks),
     sample_rate: message.sample_rate ?? null,
     has_final_audio: Boolean(message.has_final_audio),

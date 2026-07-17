@@ -109,18 +109,11 @@ router.post("/", authMiddleware(), (req, res) => {
     quality_plan: "LOW live 16kHz → HIGH final 44.1kHz",
   });
 
-  // Obavijesti sobu da streaming počinje — klijenti zaključaju snimanje.
-  const started = broadcastVoiceStarted(session);
-  notifyVoiceStarted(session).catch((error) => {
-    console.warn("[push] voice_started notify failed", error.message);
-  });
-
-  voiceLog("LOW_STREAM_BEGIN", {
+  // voice_started ide tek nakon key-offers — inače receiver dekriptira prije ključa.
+  voiceLog("LOW_STREAM_WAITING_KEYS", {
     session: shortId(sessionId),
     room: user.room_code,
     users_in_room: roomUsers.length,
-    sse_delivered: started.sent,
-    no_sse: started.offline,
   });
 
   res.status(201).json({ session_id: sessionId });
@@ -196,6 +189,24 @@ router.post("/:sessionId/key-offers", authMiddleware(), (req, res) => {
     offers_sent: offers.length,
   });
 
+  // Prvi uspješan key offer → obavijesti sobu da stream kreće (ključevi su spremni).
+  const fresh = getMessageRecord(sessionId);
+  if (applied > 0 && fresh && !fresh.started_notified) {
+    fresh.started_notified = true;
+    const started = broadcastVoiceStarted(fresh);
+    notifyVoiceStarted(fresh).catch((error) => {
+      console.warn("[push] voice_started notify failed", error.message);
+    });
+    voiceLog("LOW_STREAM_BEGIN", {
+      session: shortId(sessionId),
+      room: sessionRoom,
+      users_in_room: sessionRoom ? listDeviceIdsInRoom(sessionRoom).length : 0,
+      sse_delivered: started.sent,
+      no_sse: started.offline,
+      after: "key_offers",
+    });
+  }
+
   res.json({
     ok: true,
     count: applied,
@@ -262,8 +273,25 @@ router.post("/:sessionId/chunks", authMiddleware(), (req, res) => {
     });
   }
 
+  // Ako key-offers nisu stigli, pokreni stream signal na prvom chunku.
+  if (!session.started_notified) {
+    session.started_notified = true;
+    const started = broadcastVoiceStarted(session);
+    notifyVoiceStarted(session).catch((error) => {
+      console.warn("[push] voice_started notify failed", error.message);
+    });
+    voiceLog("LOW_STREAM_BEGIN", {
+      session: shortId(sessionId),
+      room: session.room_code,
+      users_in_room: session.room_code ? listDeviceIdsInRoom(session.room_code).length : 0,
+      sse_delivered: started.sent,
+      no_sse: started.offline,
+      after: "first_chunk_fallback",
+    });
+  }
+
   // Server šalje chunk uređajima — klijent ne pita.
-  broadcastVoiceChunk(chunk, {
+  broadcastVoiceChunk(session, {
     sequence: parsedSequence,
     encryption_version: encryptionVersion,
     ciphertext_base64: ciphertextBase64,
@@ -443,16 +471,22 @@ router.get("/:sessionId/delivery", authMiddleware(), (req, res) => {
   if (!deviceId) return;
 
   const { sessionId } = req.params;
-  const payload = getDeliveryPackage(sessionId, deviceId);
+  const roomFromToken =
+    typeof req.auth?.room_code === "string" ? req.auth.room_code.trim().toLowerCase() : null;
+  const payload = getDeliveryPackage(sessionId, deviceId, { roomFromToken });
 
-  if (!payload) {
+  if (!payload || payload.error) {
     voiceLog("DELIVERY_DENIED", {
       session: shortId(sessionId),
       device: shortId(deviceId),
+      reason: payload?.error || "unknown",
+      detail: payload?.detail || null,
+      token_room: roomFromToken,
     });
     return res.status(404).json({
       error: "not_found",
       message: "Poruka nije dostupna za ovaj uređaj.",
+      reason: payload?.error || "unknown",
     });
   }
 
@@ -461,6 +495,7 @@ router.get("/:sessionId/delivery", authMiddleware(), (req, res) => {
     device: shortId(deviceId),
     chunks: payload.chunks?.length ?? 0,
     complete: payload.is_complete,
+    key_pending: Boolean(payload.key_pending),
     quality: payload.audio_quality || (payload.has_final_audio ? "final" : "live"),
     has_final: Boolean(payload.has_final_audio),
     sample_rate: payload.sample_rate,

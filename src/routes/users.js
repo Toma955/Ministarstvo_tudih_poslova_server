@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { authMiddleware } from "../middleware/auth.js";
-import { getUser, listPeerUsers, profileResponseFromRow } from "../db/database.js";
+import { getUser, listPeerUsers, listDeviceIdsInRoom, profileResponseFromRow } from "../db/database.js";
+import { voiceLog, shortId } from "../services/voiceLog.js";
 
 const router = Router();
 
@@ -22,6 +23,7 @@ router.get("/peers", authMiddleware(), (req, res) => {
     return res.status(403).json({ error: "forbidden", message: "Niste u sobi." });
   }
 
+  const roomMembers = listDeviceIdsInRoom(user.room_code);
   const peers = listPeerUsers(deviceId, user.room_code).map((peer) => ({
     device_id: peer.device_id,
     display_name: peer.display_name,
@@ -32,7 +34,20 @@ router.get("/peers", authMiddleware(), (req, res) => {
     is_base_station: Boolean(peer.is_base_station),
   }));
 
-  res.json({ peers, room_code: user.room_code });
+  voiceLog("PEERS", {
+    device: shortId(deviceId),
+    room: user.room_code,
+    users_in_room: roomMembers.length,
+    peers_with_keys: peers.length,
+    missing_keys: Math.max(roomMembers.length - 1 - peers.length, 0),
+  });
+
+  res.json({
+    peers,
+    room_code: user.room_code,
+    users_in_room: roomMembers.length,
+    peers_with_keys: peers.length,
+  });
 });
 
 export default router;

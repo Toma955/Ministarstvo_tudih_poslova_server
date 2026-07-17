@@ -136,7 +136,7 @@ export function broadcastVoiceStarted(message) {
     session_id: message.session_id,
     sender_device_id: message.sender_device_id,
     sender_name: senderName,
-    sender_avatar_jpeg_base64: sender?.avatar_jpeg_base64 || null,
+    has_avatar: Boolean(sender?.avatar_jpeg_base64),
     source_type: message.source_type || "radio",
     room_code: message.room_code || null,
     sample_rate: 16000,

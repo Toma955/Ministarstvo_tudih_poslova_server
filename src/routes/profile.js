@@ -5,6 +5,8 @@ import {
   upsertUser,
   profileResponseFromRow,
 } from "../db/database.js";
+import { broadcastProfileUpdated } from "../services/realtime.js";
+import { voiceLog, shortId } from "../services/voiceLog.js";
 
 const router = Router();
 
@@ -67,7 +69,17 @@ router.put("/", authMiddleware(), (req, res) => {
     is_base_station: existing?.is_base_station || 0,
   });
 
-  res.json(profileResponseFromRow(getUser(deviceId)));
+  const updated = getUser(deviceId);
+  const fanout = broadcastProfileUpdated(updated, deviceId);
+  voiceLog("PROFILE_SYNC", {
+    device: shortId(deviceId),
+    name: updated?.sender_name || updated?.display_name || null,
+    room: updated?.room_code || null,
+    has_avatar: Boolean(updated?.avatar_jpeg_base64),
+    peers_notified: fanout.sent,
+  });
+
+  res.json(profileResponseFromRow(updated));
 });
 
 router.patch("/base-station", authMiddleware(), (req, res) => {
@@ -97,7 +109,10 @@ router.patch("/base-station", authMiddleware(), (req, res) => {
     is_base_station: isBaseStation ? 1 : 0,
   });
 
-  res.json(profileResponseFromRow(getUser(deviceId)));
+  const updated = getUser(deviceId);
+  broadcastProfileUpdated(updated, deviceId);
+
+  res.json(profileResponseFromRow(updated));
 });
 
 export default router;

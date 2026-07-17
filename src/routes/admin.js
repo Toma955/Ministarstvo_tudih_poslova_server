@@ -13,8 +13,10 @@ import {
   createRoom,
   setRoomActive,
   deleteRoom,
+  forceDeleteRoom,
   getRoom,
   normalizeRoomCode,
+  listDeviceIdsInRoom,
 } from "../db/database.js";
 import {
   listCompletedMessages,
@@ -25,9 +27,11 @@ import {
   createServerBroadcast,
   getAdminMessageAudio,
   purgeUserFromMemory,
+  purgeRoomVoiceMemory,
   uuidv4,
 } from "../stores/voiceMessageStore.js";
 import { notifyVoiceMessageRecipients } from "../services/notifications.js";
+import { broadcastRoomClosed } from "../services/realtime.js";
 
 const router = Router();
 
@@ -136,9 +140,23 @@ router.patch("/rooms/:roomCode", authMiddleware("admin"), (req, res) => {
     });
   }
 
+  const code = normalizeRoomCode(req.params.roomCode) || req.params.roomCode;
+  const beforeMembers = isActive ? [] : listDeviceIdsInRoom(code);
+
+  if (!isActive && beforeMembers.length > 0) {
+    // Prvo SSE kick, zatim deaktivacija (session check također izbacuje).
+    broadcastRoomClosed(code, "inactive");
+  }
+
   const room = setRoomActive(req.params.roomCode, isActive);
   if (!room) {
     return res.status(404).json({ error: "not_found", message: "Soba nije pronađena." });
+  }
+
+  if (!isActive) {
+    // Članovi ostaju u DB dok ne prođu session check / room_closed — leave se radi u session.
+    // Ovdje samo očisti voice RAM za sobu.
+    purgeRoomVoiceMemory(room.room_code);
   }
 
   res.json({
@@ -146,31 +164,65 @@ router.patch("/rooms/:roomCode", authMiddleware("admin"), (req, res) => {
     title: room.title,
     is_active: Boolean(room.is_active),
     created_at: room.created_at,
+    kicked: !isActive ? beforeMembers.length : 0,
   });
 });
 
 router.delete("/rooms/:roomCode", authMiddleware("admin"), (req, res) => {
-  const result = deleteRoom(req.params.roomCode);
+  const code = normalizeRoomCode(req.params.roomCode) || req.params.roomCode;
+  const force =
+    req.query.force === "1" ||
+    req.query.force === "true" ||
+    req.body?.force === true;
 
-  if (result.error === "not_found") {
+  // Soft path: empty room only (stari admin UI).
+  if (!force) {
+    const result = deleteRoom(req.params.roomCode);
+
+    if (result.error === "not_found") {
+      return res.status(404).json({ error: "not_found", message: "Soba nije pronađena." });
+    }
+
+    if (result.error === "not_empty") {
+      // Automatski force — admin očekuje da brisanje prekine sesije.
+      broadcastRoomClosed(code, "deleted");
+      purgeRoomVoiceMemory(code);
+      const forced = forceDeleteRoom(req.params.roomCode);
+      if (forced.error === "not_found") {
+        return res.status(404).json({ error: "not_found", message: "Soba nije pronađena." });
+      }
+      return res.json({
+        ok: true,
+        forced: true,
+        evicted: forced.evicted_device_ids?.length ?? result.member_count,
+      });
+    }
+
+    if (result.error === "invalid_format") {
+      return res.status(400).json({
+        error: result.error,
+        message: "Nevaljan ključ sobe.",
+      });
+    }
+
+    return res.json({ ok: true, forced: false, evicted: 0 });
+  }
+
+  broadcastRoomClosed(code, "deleted");
+  purgeRoomVoiceMemory(code);
+  const forced = forceDeleteRoom(req.params.roomCode);
+  if (forced.error === "not_found") {
     return res.status(404).json({ error: "not_found", message: "Soba nije pronađena." });
   }
-
-  if (result.error === "not_empty") {
-    return res.status(409).json({
-      error: result.error,
-      message: `Soba ima ${result.member_count} korisnika. Prvo uklonite korisnike.`,
-    });
+  if (forced.error === "invalid_format") {
+    return res.status(400).json({ error: forced.error, message: "Nevaljan ključ sobe." });
   }
 
-  if (result.error === "invalid_format") {
-    return res.status(400).json({
-      error: result.error,
-      message: "Nevaljan ključ sobe.",
-    });
-  }
-
-  res.json({ ok: true });
+  res.json({
+    ok: true,
+    forced: true,
+    evicted: forced.evicted_device_ids?.length ?? 0,
+  });
 });
 
 router.get("/messages", authMiddleware("admin"), (_req, res) => {

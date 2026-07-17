@@ -313,6 +313,104 @@ export function broadcastVoiceFinal(message, chunks) {
   return { sent, targets: targets.length, offline };
 }
 
+/**
+ * Obavijesti sve uređaje u sobi da je kanal zatvoren / deaktiviran.
+ * Zatim zatvara njihove SSE veze.
+ */
+export function broadcastRoomClosed(roomCode, reason = "deleted") {
+  const normalized = typeof roomCode === "string" ? roomCode.trim().toLowerCase() : null;
+  if (!normalized) return { sent: 0, targets: 0 };
+
+  const targets = listDeviceIdsInRoom(normalized);
+  const payload = {
+    room_code: normalized,
+    reason,
+    message:
+      reason === "inactive"
+        ? "Kanal je deaktiviran. Ponovno unesite ključ kad bude aktivan."
+        : "Kanal je obrisan. Sesija je prekinuta.",
+  };
+
+  let sent = 0;
+  for (const deviceId of targets) {
+    sent += emitToDevice(deviceId, "room_closed", payload);
+  }
+
+  voiceLog("BROADCAST_ROOM_CLOSED", {
+    room: normalized,
+    reason,
+    targets: targets.length,
+    sse_delivered: sent,
+  });
+
+  // Zatvori SSE nakon događaja da klijent ne drži mrtvu sobu.
+  for (const deviceId of targets) {
+    closeRealtimeClientsForDevice(deviceId);
+  }
+
+  return { sent, targets: targets.length };
+}
+
+/** Šalje ažurirani profil (ime/avatar) ostalim uređajima u sobi. */
+export function broadcastProfileUpdated(user, excludeDeviceId = null) {
+  if (!user?.device_id || !user.room_code) return { sent: 0, targets: 0 };
+
+  const roomCode = user.room_code;
+  const targets = listDeviceIdsInRoom(roomCode).filter(
+    (id) => id && id !== (excludeDeviceId || user.device_id)
+  );
+
+  const payload = {
+    device_id: user.device_id,
+    room_code: roomCode,
+    display_name: user.display_name || "",
+    sender_name: user.sender_name || user.display_name || "Nepoznato",
+    avatar_jpeg_base64: user.avatar_jpeg_base64 || null,
+    initials: (user.sender_name || user.display_name || "NE")
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((p) => p[0]?.toUpperCase() || "")
+      .join("")
+      .slice(0, 2) || "NE",
+    is_base_station: Boolean(user.is_base_station),
+  };
+
+  let sent = 0;
+  for (const deviceId of targets) {
+    sent += emitToDevice(deviceId, "profile_updated", payload);
+  }
+
+  voiceLog("BROADCAST_PROFILE_UPDATED", {
+    device: shortId(user.device_id),
+    name: payload.sender_name,
+    room: roomCode,
+    targets: targets.length,
+    sse_delivered: sent,
+    has_avatar: Boolean(payload.avatar_jpeg_base64),
+  });
+
+  return { sent, targets: targets.length };
+}
+
+function closeRealtimeClientsForDevice(deviceId) {
+  const set = clientsByDevice.get(deviceId);
+  if (!set) return;
+  for (const client of [...set]) {
+    try {
+      if (!client.res.writableEnded) {
+        client.res.end();
+      }
+    } catch {
+      // ignore
+    }
+    set.delete(client);
+  }
+  if (set.size === 0) clientsByDevice.delete(deviceId);
+  updateRealtimeRoom(deviceId, null);
+}
+
 export function realtimeStats() {
   let connections = 0;
   for (const set of clientsByDevice.values()) {

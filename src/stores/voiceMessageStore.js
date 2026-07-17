@@ -545,4 +545,34 @@ export function memoryStats() {
   };
 }
 
+/** Briše aktivne i completed glasovne poruke za sobu (npr. admin delete kanala). */
+export function purgeRoomVoiceMemory(roomCode) {
+  if (!roomCode) return { active: 0, completed: 0 };
+  const normalized = String(roomCode).trim().toLowerCase();
+  let active = 0;
+  let completed = 0;
+
+  for (const [sessionId, session] of activeSessions.entries()) {
+    if ((session.room_code || "").toLowerCase() === normalized) {
+      activeSessions.delete(sessionId);
+      active += 1;
+    }
+  }
+
+  for (let i = completedMessages.length - 1; i >= 0; i -= 1) {
+    if ((completedMessages[i].room_code || "").toLowerCase() === normalized) {
+      completedMessages.splice(i, 1);
+      completed += 1;
+    }
+  }
+
+  return { active, completed };
+}
+
+/** Briše RAM glasovne sesije — samo za unit / integration testove. */
+export function resetVoiceMemoryForTests() {
+  activeSessions.clear();
+  completedMessages.length = 0;
+}
+
 export { uuidv4 };

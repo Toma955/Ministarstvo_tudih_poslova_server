@@ -283,6 +283,50 @@ export function deleteRoom(roomCode) {
   return { ok: true };
 }
 
+/**
+ * Briše sobu i izbacuje sve članove (room_code = null).
+ * Koristi se kad admin forsira brisanje aktivnog kanala.
+ */
+export function forceDeleteRoom(roomCode) {
+  const normalized = normalizeRoomCode(roomCode);
+  if (!normalized) return { error: "invalid_format" };
+
+  const room = getRoom(normalized);
+  if (!room) return { error: "not_found" };
+
+  const memberIds = listDeviceIdsInRoom(normalized);
+  clearUsersFromRoom(normalized);
+  db.prepare("DELETE FROM rooms WHERE room_code = ?").run(normalized);
+
+  return {
+    ok: true,
+    room_code: normalized,
+    evicted_device_ids: memberIds,
+  };
+}
+
+/** Uklanja sve korisnike iz sobe (ostaju u bazi bez room_code). */
+export function clearUsersFromRoom(roomCode) {
+  const normalized = normalizeRoomCode(roomCode);
+  if (!normalized) return [];
+
+  const members = listDeviceIdsInRoom(normalized);
+  db.prepare("UPDATE users SET room_code = NULL, updated_at = datetime('now') WHERE room_code = ?").run(
+    normalized
+  );
+  return members;
+}
+
+export function leaveRoom(deviceId) {
+  const user = getUser(deviceId);
+  if (!user) return null;
+  const previous = user.room_code || null;
+  db.prepare("UPDATE users SET room_code = NULL, updated_at = datetime('now') WHERE device_id = ?").run(
+    deviceId
+  );
+  return { device_id: deviceId, previous_room_code: previous };
+}
+
 export function joinRoom({ deviceId, roomCode, publicKeyBase64, displayName }) {
   const normalizedRoom =
     normalizeRoomCode(roomCode) || normalizeRoomCode(config.defaultRoomCode);

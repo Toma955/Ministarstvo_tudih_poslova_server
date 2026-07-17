@@ -1,6 +1,6 @@
 import jwt from "jsonwebtoken";
 import { config } from "../config.js";
-import { getUser, upsertUser } from "../db/database.js";
+import { getUser, getRoom, upsertUser } from "../db/database.js";
 
 export function signToken(payload) {
   return jwt.sign(payload, config.jwtSecret, { expiresIn: config.jwtExpiresIn });
@@ -12,7 +12,7 @@ export function verifyToken(token) {
 
 /**
  * Nakon Render redeploya SQLite može biti prazan dok JWT još ima room_code.
- * Vrati membership iz tokena da peers/inbox/voice rade.
+ * Vrati membership iz tokena SAMO ako soba još postoji i aktivna je.
  */
 function ensureUserRoomFromToken(auth) {
   if (!auth || auth.role !== "user" || !auth.device_id) return;
@@ -22,6 +22,11 @@ function ensureUserRoomFromToken(auth) {
 
   const existing = getUser(auth.device_id);
   if (existing?.room_code) return;
+
+  const room = getRoom(roomFromToken);
+  if (!room || !room.is_active) {
+    return;
+  }
 
   upsertUser({
     device_id: auth.device_id,

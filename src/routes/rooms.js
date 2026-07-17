@@ -1,7 +1,14 @@
 import { Router } from "express";
 import { config } from "../config.js";
 import { signToken, authMiddleware } from "../middleware/auth.js";
-import { joinRoom, getUser, ensureDefaultRoom, listDeviceIdsInRoom } from "../db/database.js";
+import {
+  joinRoom,
+  getUser,
+  getRoom,
+  ensureDefaultRoom,
+  listDeviceIdsInRoom,
+  leaveRoom,
+} from "../db/database.js";
 import { isApnsConfigured } from "../services/apns.js";
 import { voiceLog, shortId } from "../services/voiceLog.js";
 import { updateRealtimeRoom, realtimeStats } from "../services/realtime.js";
@@ -98,6 +105,10 @@ router.post("/join", (req, res) => {
   });
 });
 
+/**
+ * Provjera aktivne sesije kanala.
+ * Ako soba ne postoji / nije aktivna / korisnik nije u sobi → 404 i čisti membership.
+ */
 router.get("/session", authMiddleware(), (req, res) => {
   const deviceId = req.auth?.device_id;
   if (!deviceId || req.auth?.role !== "user") {
@@ -106,7 +117,42 @@ router.get("/session", authMiddleware(), (req, res) => {
 
   const user = getUser(deviceId);
   if (!user || !user.room_code) {
-    return res.status(404).json({ error: "not_found", message: "Račun nije pronađen." });
+    return res.status(404).json({
+      error: "not_found",
+      reason: "no_membership",
+      message: "Niste u kanalu.",
+    });
+  }
+
+  const room = getRoom(user.room_code);
+  if (!room) {
+    leaveRoom(deviceId);
+    updateRealtimeRoom(deviceId, null);
+    voiceLog("SESSION_INVALID", {
+      device: shortId(deviceId),
+      reason: "room_missing",
+      room: user.room_code,
+    });
+    return res.status(404).json({
+      error: "not_found",
+      reason: "room_missing",
+      message: "Kanal više ne postoji. Sesija je prekinuta.",
+    });
+  }
+
+  if (!room.is_active) {
+    leaveRoom(deviceId);
+    updateRealtimeRoom(deviceId, null);
+    voiceLog("SESSION_INVALID", {
+      device: shortId(deviceId),
+      reason: "room_inactive",
+      room: user.room_code,
+    });
+    return res.status(404).json({
+      error: "not_found",
+      reason: "room_inactive",
+      message: "Kanal je deaktiviran. Sesija je prekinuta.",
+    });
   }
 
   res.json({
@@ -115,6 +161,7 @@ router.get("/session", authMiddleware(), (req, res) => {
     display_name: user.display_name,
     sender_name: user.sender_name,
     is_base_station: Boolean(user.is_base_station),
+    room_active: true,
   });
 });
 
